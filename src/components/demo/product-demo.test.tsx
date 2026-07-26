@@ -57,4 +57,21 @@ describe("ProductDemo", () => {
       screen.getByRole("heading", { name: /make a considered request/i }),
     ).toBeInTheDocument();
   });
+
+  it("publishes the cross-tab connector download and load-unpacked steps", () => {
+    render(<ProductDemo />);
+
+    expect(
+      screen.getByRole("heading", { name: /use mochi across tabs/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /download chrome connector/i }),
+    ).toHaveAttribute("href", "/downloads/mochi-connector.zip");
+    expect(
+      screen.getByText(/captures stay local until you press analyze/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getAllByTestId("connector-install-step"),
+    ).toHaveLength(3);
+  });
 });

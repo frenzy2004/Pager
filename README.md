@@ -13,9 +13,11 @@ creates three grounded strategies, and acts in one of three modes:
 
 The Vercel-hosted build is a full interactive product slice with job
 application, sales lead, and general-form missions. It uses a deterministic DOM
-driver on its embedded form. The same `ActionDriver` interface includes a lazy
-[Alibaba Page Agent](https://github.com/alibaba/page-agent) adapter for the
-extension/runtime version that can act on arbitrary webpages.
+driver on its embedded form. The downloadable Manifest V3 Chrome connector
+injects the Mochi pet into eligible tabs, keeps one global side panel, captures
+up to eight page/region images, and bundles
+[Alibaba Page Agent](https://github.com/alibaba/page-agent) for real page
+execution.
 
 ## Run locally
 
@@ -37,6 +39,7 @@ Add server-side values to `.env.local`:
 ```bash
 OPENAI_API_KEY=...
 OPENAI_MODEL=gpt-5.6-sol
+PAGE_AGENT_MODEL=gpt-5.6-sol
 EXA_API_KEY=...
 ```
 
@@ -48,24 +51,37 @@ same three strategies with those sources.
 Keys are never prefixed with `NEXT_PUBLIC_`, never reach the browser, and are
 ignored by Git.
 
+## Build and install the Chrome connector
+
+```bash
+npm run package:extension
+```
+
+This creates `extension/dist` for **Load unpacked** and
+`public/downloads/mochi-connector.zip` for the Vercel download link. In Chrome
+116 or newer:
+
+1. unzip the archive;
+2. open `chrome://extensions` and enable Developer mode;
+3. choose **Load unpacked** and select the unzipped folder.
+
+The pet appears on normal HTTP/HTTPS tabs. Capture page stores the visible
+viewport; Snip area freezes that same frame and crops the dragged region.
+Captures live in `chrome.storage.session` and do not leave Chrome until Analyze.
+
 ## Page Agent bridge
 
-`src/lib/mochi/page-agent-driver.ts` dynamically imports `page-agent` and
-converts a selected strategy into a bounded DOM task. Empty/unknown values are
-omitted, fill-only prohibits submission, and autopilot allows exactly one final
-submit. The hosted page does not expose a browser-side model key, so it uses the
-DOM driver instead.
+`extension/src/content/agent.ts` is built as a separate on-demand bundle. The
+service worker injects it only after Execute. It uses 16 bounded Page Agent
+steps, disables `ask_user` and generated script execution, honors review/fill/
+autopilot submit boundaries, and can be cancelled or undone.
 
-A Chrome extension can create the driver with an OpenAI-compatible,
-extension-owned runtime configuration:
-
-```ts
-const driver = await createPageAgentDriver({
-  baseURL: extensionProxyUrl,
-  model: extensionModel,
-  apiKey: sessionCredential,
-});
-```
+Its custom fetch sends the OpenAI-compatible request to the extension service
+worker, which forwards it only to
+`/api/page-agent/chat/completions` on the fixed Mochi Vercel origin. The route
+ignores browser model/auth settings, applies the server model and key, and
+forces tool-compatible GPT-5.6 reasoning settings. No provider credential is
+stored in the extension.
 
 ## Verification
 
@@ -83,7 +99,7 @@ status claims.
 
 ## Privacy and safety boundaries
 
-- Up to three PNG/JPEG/WebP screenshots are held in the open browser session.
+- Up to eight PNG/JPEG/WebP captures are held in the browser session.
 - Unknown identity/contact facts stay blank instead of being invented.
 - Public web research is cited and visually distinguished from draft wording.
 - Review is the default action mode.

@@ -289,6 +289,102 @@ export function ProductDemo() {
         </div>
       </section>
 
+      <section
+        className="connector-install"
+        id="connector"
+        aria-labelledby="connector-title"
+      >
+        <div className="connector-install__copy">
+          <span className="hero-kicker">
+            <i>✦</i>
+            One sidekick, every tab
+          </span>
+          <h2 id="connector-title" aria-label="Use Mochi across tabs">
+            Use Mochi
+            <br />
+            <em>across tabs.</em>
+          </h2>
+          <p>
+            Add the tiny Chrome connector once. Mochi then appears on eligible
+            websites, keeps one shared eight-capture tray while you switch
+            tabs, and uses Alibaba Page Agent when you tell it to act.
+          </p>
+          <div className="connector-install__badges" aria-label="Requirements">
+            <span>CHROME 116+</span>
+            <span>8 CAPTURES</span>
+            <span>NO BROWSER API KEY</span>
+          </div>
+          <a
+            className="connector-download"
+            href="/downloads/mochi-connector.zip"
+            download
+          >
+            Download Chrome connector
+            <span aria-hidden="true">↓</span>
+          </a>
+          <small>
+            Captures stay local until you press Analyze. OpenAI and Exa keys
+            remain on Vercel.
+          </small>
+        </div>
+
+        <div className="connector-install__demo">
+          <div className="connector-browser" aria-hidden="true">
+            <div className="connector-browser__bar">
+              <i />
+              <i />
+              <i />
+              <span>profile.example / research.example / form.example</span>
+            </div>
+            <div className="connector-browser__page">
+              <span className="connector-context-card connector-context-card--one">
+                PROFILE
+                <b>01</b>
+              </span>
+              <span className="connector-context-card connector-context-card--two">
+                RESEARCH
+                <b>02</b>
+              </span>
+              <span className="connector-context-card connector-context-card--three">
+                FORM
+                <b>03</b>
+              </span>
+              <div className="connector-panel-preview">
+                <strong>mochi</strong>
+                <small>3 / 8 captures</small>
+                <span>Capture page</span>
+                <span>Snip area</span>
+                <b>M</b>
+              </div>
+            </div>
+          </div>
+
+          <ol className="connector-steps" aria-label="Install the connector">
+            <li data-testid="connector-install-step">
+              <b>01</b>
+              <span>
+                <strong>Download + unzip</strong>
+                <small>Keep the mochi-connector folder together.</small>
+              </span>
+            </li>
+            <li data-testid="connector-install-step">
+              <b>02</b>
+              <span>
+                <strong>Open chrome://extensions</strong>
+                <small>Turn on Developer mode in the top corner.</small>
+              </span>
+            </li>
+            <li data-testid="connector-install-step">
+              <b>03</b>
+              <span>
+                <strong>Choose Load unpacked</strong>
+                <small>Select the unzipped folder, then switch tabs.</small>
+              </span>
+            </li>
+          </ol>
+        </div>
+      </section>
+
       <section className="trust-strip" aria-label="Product principles">
         <span>01</span>
         <p>
