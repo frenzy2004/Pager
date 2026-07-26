@@ -78,3 +78,27 @@ This file records verified checkpoints, failures, and corrective decisions.
   three numbered badges and two ambiguous labelled groups. After correction,
   the rerun reports zero violations; gradient-backed text remains
   machine-inconclusive rather than a confirmed failure.
+
+## 2026-07-26 — Release hardening
+
+- **E2E RED verified:** the first Playwright run clicked the server-rendered pet
+  before React hydration, so the event was lost. A hydration-ready guard made
+  that state explicit; the second run then revealed the runner used
+  `127.0.0.1` while Next dev served `localhost`, and Next logged a blocked
+  cross-origin runtime request. Aligning the host restored hydration.
+- **Mobile assertion correction:** the first bounds check sampled the bottom
+  sheet during its entrance transform and measured the intentional off-screen
+  starting frame. The test now polls until the animated sheet is inside the
+  viewport, then checks every edge.
+- **Suite isolation correction:** Vitest initially discovered
+  `tests/e2e/mochi.spec.ts` and tried to execute Playwright hooks. The unit
+  config now excludes the E2E, dependency, and build-output directories.
+- **Dependency audit:** the first production audit found vulnerable transitive
+  `postcss` and `sharp` versions under Next. Fixed releases were pinned through
+  package overrides. A trial ESLint 10 upgrade produced a verified
+  incompatibility in Next's React lint plugin, so ESLint 9 was retained and
+  only its vulnerable `minimatch` transitive was overridden.
+- **Fresh release gate:** `npm audit` reports zero vulnerabilities; ESLint and
+  TypeScript report zero errors; 7 unit files / 19 tests pass; the Next.js
+  production build passes; and Playwright reports 5 passing browser flows with
+  1 intentional desktop skip for the mobile-only bounds scenario.

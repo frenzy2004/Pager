@@ -4,10 +4,15 @@ import { MochiFace } from "@/components/mochi/mochi-face";
 
 interface MochiPetProps {
   open: boolean;
+  disabled?: boolean;
   onToggle(): void;
 }
 
-export function MochiPet({ open, onToggle }: MochiPetProps) {
+export function MochiPet({
+  open,
+  disabled = false,
+  onToggle,
+}: MochiPetProps) {
   return (
     <div className={`mochi-launcher${open ? " is-open" : ""}`}>
       {!open && (
@@ -20,6 +25,7 @@ export function MochiPet({ open, onToggle }: MochiPetProps) {
         type="button"
         aria-label={open ? "Close Mochi" : "Open Mochi"}
         aria-expanded={open}
+        disabled={disabled}
         onClick={onToggle}
       >
         <MochiFace />

@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 
 import {
   ContextTray,
@@ -22,6 +29,10 @@ import type {
 
 const SAMPLE_CONTEXT =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2n0YAAAAASUVORK5CYII=";
+
+const subscribeToHydration = () => () => {};
+const getClientHydrationSnapshot = () => true;
+const getServerHydrationSnapshot = () => false;
 
 type OverlayPhase = "context" | "analyzing" | "results" | "review" | "success";
 
@@ -111,6 +122,11 @@ export function MochiOverlay({
   onUndo,
   canUndo,
 }: MochiOverlayProps) {
+  const mounted = useSyncExternalStore(
+    subscribeToHydration,
+    getClientHydrationSnapshot,
+    getServerHydrationSnapshot,
+  );
   const [open, setOpen] = useState(false);
   const [phase, setPhase] = useState<OverlayPhase>("context");
   const [screenshots, setScreenshots] = useState<ScreenshotPreview[]>([]);
@@ -296,7 +312,11 @@ export function MochiOverlay({
 
   return (
     <>
-      <MochiPet open={open} onToggle={() => setOpen((current) => !current)} />
+      <MochiPet
+        open={open}
+        disabled={!mounted}
+        onToggle={() => setOpen((current) => !current)}
+      />
 
       {open && (
         <aside

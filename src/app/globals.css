@@ -750,6 +750,11 @@ select:focus-visible {
   box-shadow: 0 24px 54px rgba(29, 29, 26, 0.33);
 }
 
+.mochi-pet-button:disabled {
+  cursor: wait;
+  opacity: 0.82;
+}
+
 .mochi-pet-label {
   position: absolute;
   bottom: 7px;
