@@ -8,23 +8,35 @@ export const pageFieldSchema = z.object({
   options: z.array(z.string().min(1).max(120)).max(30).optional(),
 });
 
+const screenshotDataUrlSchema = z.string().regex(
+  /^data:image\/(?:png|jpeg|webp);base64,/,
+  "Screenshot must be a PNG, JPEG, or WebP data URL.",
+);
+
+const connectorCaptureSchema = z
+  .object({
+    dataUrl: screenshotDataUrlSchema.max(850_000),
+    sourceUrl: z.string().url().max(2_048),
+    sourceTitle: z.string().max(300),
+    capturedAt: z.string().datetime(),
+    kind: z.enum(["viewport", "region"]),
+  })
+  .transform((capture) => ({
+    name: capture.sourceTitle || new URL(capture.sourceUrl).hostname,
+    ...capture,
+  }));
+
+const hostedScreenshotSchema = z.object({
+  name: z.string().min(1).max(180),
+  dataUrl: screenshotDataUrlSchema.max(8_500_000),
+});
+
 export const analysisInputSchema = z.object({
   preset: z.enum(["job", "lead", "general"]),
   taskHint: z.string().max(800),
   screenshots: z
-    .array(
-      z.object({
-        name: z.string().min(1).max(180),
-        dataUrl: z
-          .string()
-          .max(8_500_000)
-          .regex(
-            /^data:image\/(?:png|jpeg|webp);base64,/,
-            "Screenshot must be a PNG, JPEG, or WebP data URL.",
-          ),
-      }),
-    )
-    .max(3),
+    .array(z.union([connectorCaptureSchema, hostedScreenshotSchema]))
+    .max(8),
   fields: z.array(pageFieldSchema).min(1).max(30),
 });
 
@@ -54,4 +66,3 @@ export const modelAnalysisSchema = z.object({
 });
 
 export type ModelAnalysis = z.infer<typeof modelAnalysisSchema>;
-

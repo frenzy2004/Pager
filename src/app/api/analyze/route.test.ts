@@ -64,19 +64,28 @@ describe("POST /api/analyze", () => {
     expect(body.issues).toEqual(expect.arrayContaining([expect.any(String)]));
   });
 
-  it("rejects more than three screenshots", async () => {
-    const screenshot = {
-      name: "context.png",
+  it("accepts eight sourced captures and rejects a ninth", async () => {
+    const capture = {
       dataUrl: "data:image/png;base64,AA==",
+      sourceUrl: "https://example.com/profile",
+      sourceTitle: "Candidate profile",
+      capturedAt: "2026-07-26T12:00:00.000Z",
+      kind: "viewport",
     };
-    const response = await POST(
+    const accepted = await POST(
       requestWith({
         ...validInput,
-        screenshots: [screenshot, screenshot, screenshot, screenshot],
+        screenshots: Array.from({ length: 8 }, () => capture),
+      }),
+    );
+    const rejected = await POST(
+      requestWith({
+        ...validInput,
+        screenshots: Array.from({ length: 9 }, () => capture),
       }),
     );
 
-    expect(response.status).toBe(400);
+    expect(accepted.status).toBe(200);
+    expect(rejected.status).toBe(400);
   });
 });
-

@@ -11,6 +11,7 @@ import {
 
 import {
   ContextTray,
+  MAX_CONTEXT_SCREENSHOTS,
   type ScreenshotPreview,
 } from "@/components/mochi/context-tray";
 import { ModeSwitcher } from "@/components/mochi/mode-switcher";
@@ -151,9 +152,14 @@ export function MochiOverlay({
   const addFiles = useCallback(
     async (files: File[]) => {
       setError("");
-      const slots = Math.max(0, 3 - screenshots.length);
+      const slots = Math.max(
+        0,
+        MAX_CONTEXT_SCREENSHOTS - screenshots.length,
+      );
       if (slots === 0) {
-        setError("Mochi can hold three screenshots at a time.");
+        setError(
+          `Mochi can hold ${MAX_CONTEXT_SCREENSHOTS} screenshots at a time.`,
+        );
         return;
       }
 
@@ -180,7 +186,9 @@ export function MochiOverlay({
         }
       }
 
-      setScreenshots((current) => [...current, ...next].slice(0, 3));
+      setScreenshots((current) =>
+        [...current, ...next].slice(0, MAX_CONTEXT_SCREENSHOTS),
+      );
     },
     [screenshots.length],
   );

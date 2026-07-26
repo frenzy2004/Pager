@@ -164,5 +164,31 @@ describe("MochiOverlay", () => {
     await user.click(screen.getByRole("button", { name: /approve and fill/i }));
     await waitFor(() => expect(onExecute).toHaveBeenCalledTimes(2));
   });
-});
 
+  it("holds as many as eight screenshots in one session", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <MochiOverlay
+        fields={fields}
+        preset="general"
+        onExecute={vi.fn()}
+        onUndo={vi.fn()}
+        canUndo={false}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /open mochi/i }));
+    const screenshots = Array.from(
+      { length: 8 },
+      (_, index) =>
+        new File(["pixel"], `context-${index + 1}.png`, {
+          type: "image/png",
+        }),
+    );
+    await user.upload(screen.getByLabelText(/add screenshots/i), screenshots);
+
+    expect(await screen.findByText("8/8")).toBeInTheDocument();
+    expect(screen.getByText("context-8.png")).toBeInTheDocument();
+  });
+});

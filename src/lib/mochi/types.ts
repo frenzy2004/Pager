@@ -13,6 +13,10 @@ export type StrategyAccent = "sage" | "violet" | "coral";
 export interface ScreenshotInput {
   name: string;
   dataUrl: string;
+  sourceUrl?: string;
+  sourceTitle?: string;
+  capturedAt?: string;
+  kind?: "viewport" | "region";
 }
 
 export interface PageField {
@@ -82,4 +86,3 @@ export interface ActionDriver {
   ): Promise<ExecutionResult>;
   cancel(): void;
 }
-

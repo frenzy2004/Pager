@@ -6,6 +6,8 @@ export interface ScreenshotPreview {
   dataUrl: string;
 }
 
+export const MAX_CONTEXT_SCREENSHOTS = 8;
+
 interface ContextTrayProps {
   screenshots: ScreenshotPreview[];
   onFiles(files: File[]): void;
@@ -56,7 +58,9 @@ export function ContextTray({
           <strong>Drop screenshots here</strong>
           <small>or click to browse · PNG, JPEG, WebP</small>
         </span>
-        <span className="context-count">{screenshots.length}/3</span>
+        <span className="context-count">
+          {screenshots.length}/{MAX_CONTEXT_SCREENSHOTS}
+        </span>
       </label>
 
       {screenshots.length > 0 ? (
@@ -90,4 +94,3 @@ export function ContextTray({
     </div>
   );
 }
-
