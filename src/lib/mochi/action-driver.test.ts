@@ -11,7 +11,7 @@ const strategy: Strategy = {
   confidence: 0.91,
   accent: "violet",
   fields: {
-    name: { value: "Avery Tan", status: "draft", confidence: 0.8 },
+    name: { value: "", status: "needs-input", confidence: 0 },
     summary: { value: "A clear summary.", status: "draft", confidence: 0.8 },
   },
   sources: [],
@@ -39,7 +39,6 @@ describe("createDomActionDriver", () => {
 
     expect(result.status).toBe("filled");
     expect(fill).toHaveBeenCalledWith({
-      name: "Avery Tan",
       summary: "A clear summary.",
     });
     expect(submit).not.toHaveBeenCalled();
@@ -80,4 +79,3 @@ describe("createDomActionDriver", () => {
     vi.useRealTimers();
   });
 });
-

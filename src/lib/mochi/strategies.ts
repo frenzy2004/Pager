@@ -72,6 +72,7 @@ function suggestionFor(
   key: string,
   label: string,
   copy: string,
+  preset: Preset,
   options?: string[],
 ) {
   if (IDENTITY_FIELD_PATTERN.test(`${key} ${label}`)) {
@@ -79,6 +80,19 @@ function suggestionFor(
       value: "",
       status: "needs-input" as const,
       confidence: 0,
+    };
+  }
+
+  if (/(role|title|category)/i.test(`${key} ${label}`)) {
+    const shortValues: Record<Preset, string> = {
+      job: "Product Designer",
+      lead: "Product partnership",
+      general: "General request",
+    };
+    return {
+      value: shortValues[preset],
+      status: "draft" as const,
+      confidence: 0.7,
     };
   }
 
@@ -102,7 +116,13 @@ export function createDemoAnalysis(input: AnalysisInput): AnalysisResult {
   const buildStrategy = (meta: (typeof strategyMeta)[number]) => {
     const values = input.fields.map((field) => [
       field.key,
-      suggestionFor(field.key, field.label, copy[meta.id], field.options),
+      suggestionFor(
+        field.key,
+        field.label,
+        copy[meta.id],
+        input.preset,
+        field.options,
+      ),
     ]);
 
     return {

@@ -35,3 +35,46 @@ This file records verified checkpoints, failures, and corrective decisions.
   explicit three-item tuple, preserving the “exactly three” contract.
 - **Secrets:** local burner keys were added to ignored `.env.local`; live
   provider behavior still needs an HTTP integration run.
+- **Checkpoint note:** the first staged secret-scan command used `--cached`
+  after the pattern, which Git rejected. It was immediately rerun as
+  `git grep --cached`; zero tracked secret matches were found.
+
+## 2026-07-26 — Live providers and product surface
+
+- **OpenAI failure observed:** the first HTTP smoke packet used a tiny PNG that
+  decoded locally but the API rejected as invalid image data (`400`). The live
+  route correctly surfaced this as `502` instead of pretending demo success.
+- **OpenAI verified:** a fresh 512×512 PNG request returned HTTP 200,
+  `engine: openai`, exactly three ordered strategies, and `needs-input` for the
+  unsupported identity field.
+- **Exa verified:** a direct bounded `fast` search returned HTTP 200, three
+  results, highlights, and a request ID.
+- **Full provider chain verified:** a lead packet that materially required
+  public research completed OpenAI → Exa → OpenAI with HTTP 200,
+  `engine: openai+exa`, three strategies, and five attached sources.
+- **UI RED verified:** the overlay and embedded-product suites first failed on
+  missing components. The action-driver regression also proved blank model
+  suggestions would overwrite existing user values.
+- **UI GREEN verified:** the DOM driver now omits blank suggestions. The pet,
+  context tray, strategy picker, three modes, review gate, form fill, and undo
+  pass their interaction suites.
+- **Harness corrections:** an initial component assertion used an unsupported
+  matcher composition, and test cleanup was not globally registered. Both were
+  test-harness issues; the received value already contained the correct product
+  copy. Global cleanup and a direct value assertion fixed isolation.
+- **React review:** replaced render-time ref initialization with lazy state,
+  split the shared Mochi face into its own component, removed an unnecessary
+  memo, and added semantic roles to labelled groups.
+- **Fresh local verification:** 7 test files / 19 tests pass, TypeScript and
+  ESLint report zero errors, and the Next.js 16 production build completes.
+- **Browser verification:** desktop and 390×844 mobile layouts render with no
+  framework overlay or browser errors. Live screenshot analysis rendered three
+  routes; fill-only populated supported fields, left unknown email blank, and
+  undo restored the form.
+- **Browser-tool note:** a text-based wait timed out even though the results had
+  rendered; the accessibility snapshot and screenshot immediately confirmed
+  the target heading. Subsequent checks used role snapshots.
+- **Accessibility:** the first axe run found one WCAG AA contrast violation in
+  three numbered badges and two ambiguous labelled groups. After correction,
+  the rerun reports zero violations; gradient-backed text remains
+  machine-inconclusive rather than a confirmed failure.

@@ -13,10 +13,9 @@ export interface DomActionHooks {
 
 function strategyValues(strategy: Strategy) {
   return Object.fromEntries(
-    Object.entries(strategy.fields).map(([key, suggestion]) => [
-      key,
-      suggestion.value,
-    ]),
+    Object.entries(strategy.fields)
+      .filter(([, suggestion]) => suggestion.value.trim().length > 0)
+      .map(([key, suggestion]) => [key, suggestion.value]),
   );
 }
 
