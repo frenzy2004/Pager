@@ -22,7 +22,15 @@ export interface ScreenshotInput {
 export interface PageField {
   key: string;
   label: string;
-  type: "text" | "email" | "tel" | "url" | "textarea" | "select";
+  type:
+    | "text"
+    | "email"
+    | "tel"
+    | "url"
+    | "textarea"
+    | "select"
+    | "checkbox"
+    | "radio";
   required: boolean;
   options?: string[];
 }

@@ -88,4 +88,29 @@ describe("POST /api/analyze", () => {
     expect(accepted.status).toBe(200);
     expect(rejected.status).toBe(400);
   });
+
+  it("accepts checkbox and grouped radio manifests from the connector", async () => {
+    const response = await POST(
+      requestWith({
+        ...validInput,
+        fields: [
+          {
+            key: "remote",
+            label: "Open to remote",
+            type: "checkbox",
+            required: false,
+          },
+          {
+            key: "contact",
+            label: "Contact method",
+            type: "radio",
+            required: false,
+            options: ["email", "phone"],
+          },
+        ],
+      }),
+    );
+
+    expect(response.status).toBe(200);
+  });
 });

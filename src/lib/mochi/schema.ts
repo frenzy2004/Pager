@@ -3,7 +3,16 @@ import { z } from "zod";
 export const pageFieldSchema = z.object({
   key: z.string().min(1).max(80),
   label: z.string().min(1).max(120),
-  type: z.enum(["text", "email", "tel", "url", "textarea", "select"]),
+  type: z.enum([
+    "text",
+    "email",
+    "tel",
+    "url",
+    "textarea",
+    "select",
+    "checkbox",
+    "radio",
+  ]),
   required: z.boolean(),
   options: z.array(z.string().min(1).max(120)).max(30).optional(),
 });
