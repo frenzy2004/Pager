@@ -9,6 +9,8 @@ creates three grounded strategies, and acts in one of three modes:
 - **Fill only** — populate supported values and never submit.
 - **Autopilot** — populate and submit after a cancellable countdown.
 
+**Live product:** [mochi-overlay.vercel.app](https://mochi-overlay.vercel.app)
+
 The Vercel-hosted build is a full interactive product slice with job
 application, sales lead, and general-form missions. It uses a deterministic DOM
 driver on its embedded form. The same `ActionDriver` interface includes a lazy

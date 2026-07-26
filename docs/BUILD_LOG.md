@@ -102,3 +102,28 @@ This file records verified checkpoints, failures, and corrective decisions.
   TypeScript report zero errors; 7 unit files / 19 tests pass; the Next.js
   production build passes; and Playwright reports 5 passing browser flows with
   1 intentional desktop skip for the mobile-only bounds scenario.
+
+## 2026-07-26 — Production deployment
+
+- **Project:** linked `moonlantern24-1017s-projects/mochi-overlay` and stored the
+  OpenAI/Exa burner credentials as Vercel Production variables. Both provider
+  keys are sensitive; the model name is non-sensitive.
+- **Git integration note:** Vercel could not attach the GitHub repository
+  because the authenticated Vercel account has no GitHub login connection.
+  Direct authenticated CLI deployment succeeded and GitHub `main` remains the
+  canonical source.
+- **Cloud build:** Vercel installed the locked dependencies, compiled Next.js
+  16.2.12, passed TypeScript, generated all static routes, and marked deployment
+  `dpl_HL6LE7KpSuVwHd4ARCpyRiD5PXnK` Ready. Production is aliased at
+  `https://mochi-overlay.vercel.app`.
+- **Production browser suite:** the same deployed URL passed 5 Playwright flows
+  with 1 intentional mobile-only skip in the desktop project.
+- **Production provider smoke:** a real screenshot packet returned HTTP 200,
+  `engine: openai`, exactly three strategies, a supported visible name, and
+  `needs-input` for the absent email. A research-required lead packet returned
+  HTTP 200, `engine: openai+exa`, three strategies, five sources, and
+  `needs-input` for the absent contact.
+- **Production visual/accessibility check:** the page and open overlay rendered
+  without browser errors. Axe reported zero confirmed violations (gradient
+  contrast remained manual-review/incomplete), and Vercel returned no error or
+  5xx logs for the verification window.
