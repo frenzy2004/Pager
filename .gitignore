@@ -1,5 +1,7 @@
 node_modules/
 .worktrees/
+extension/dist/
+public/downloads/mochi-connector.zip
 .next/
 out/
 coverage/
