@@ -99,7 +99,7 @@ function suggestionFor(
 
 export function createDemoAnalysis(input: AnalysisInput): AnalysisResult {
   const copy = missionCopy[input.preset];
-  const strategies = strategyMeta.map((meta) => {
+  const buildStrategy = (meta: (typeof strategyMeta)[number]) => {
     const values = input.fields.map((field) => [
       field.key,
       suggestionFor(field.key, field.label, copy[meta.id], field.options),
@@ -110,7 +110,12 @@ export function createDemoAnalysis(input: AnalysisInput): AnalysisResult {
       fields: Object.fromEntries(values),
       sources: [],
     } satisfies Strategy;
-  }) as [Strategy, Strategy, Strategy];
+  };
+  const strategies: [Strategy, Strategy, Strategy] = [
+    buildStrategy(strategyMeta[0]),
+    buildStrategy(strategyMeta[1]),
+    buildStrategy(strategyMeta[2]),
+  ];
 
   const hasImages = input.screenshots.length > 0;
 
@@ -128,4 +133,3 @@ export function createDemoAnalysis(input: AnalysisInput): AnalysisResult {
     strategies,
   };
 }
-

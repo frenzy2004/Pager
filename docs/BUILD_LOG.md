@@ -25,3 +25,13 @@ This file records verified checkpoints, failures, and corrective decisions.
   cancelling immediately after `execute()` happened before the countdown timer
   existed, so the test received `submitted`. The driver now records an early
   cancellation request. Fresh run: 3 test files passed, 10 tests passed.
+- **API RED verified:** the route suite failed on the expected missing
+  `src/app/api/analyze/route` module.
+- **API GREEN verified:** demo fallback, malformed-packet rejection, and the
+  three-screenshot limit pass. Fresh full run: 4 files passed, 13 tests passed;
+  `tsc --noEmit` completed with zero errors.
+- **Type correction:** the first typecheck rejected an unsafe array-to-tuple
+  assertion for the three demo strategies. The generator now constructs an
+  explicit three-item tuple, preserving the “exactly three” contract.
+- **Secrets:** local burner keys were added to ignored `.env.local`; live
+  provider behavior still needs an HTTP integration run.
