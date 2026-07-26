@@ -4,6 +4,10 @@ import type {
   ExecutionResult,
   Strategy,
 } from "@/lib/mochi/types";
+import {
+  buildPageAgentTask,
+  strategyValues,
+} from "@/lib/mochi/page-agent-task";
 
 export interface PageAgentRuntimeConfig {
   baseURL: string;
@@ -19,32 +23,7 @@ interface PageAgentLike {
 
 type PageAgentFactory = () => Promise<PageAgentLike>;
 
-function nonEmptyValues(strategy: Strategy) {
-  return Object.fromEntries(
-    Object.entries(strategy.fields)
-      .filter(([, suggestion]) => suggestion.value.trim().length > 0)
-      .map(([key, suggestion]) => [key, suggestion.value]),
-  );
-}
-
-export function buildPageAgentTask(
-  strategy: Strategy,
-  mode: ExecutionMode,
-) {
-  const values = nonEmptyValues(strategy);
-  const submitInstruction =
-    mode === "autopilot"
-      ? "After verifying every filled value, submit exactly once."
-      : "Do not submit the form, click a final confirmation, or navigate away.";
-
-  return [
-    "Fill the single visible form using only the exact field-value map below.",
-    "Match keys to labels, names, or accessible descriptions. Skip any field not present.",
-    "Never infer or invent a missing value. Do not alter fields outside this map.",
-    `Field-value map: ${JSON.stringify(values)}`,
-    submitInstruction,
-  ].join("\n");
-}
+export { buildPageAgentTask } from "@/lib/mochi/page-agent-task";
 
 export async function createPageAgentDriver(
   config: PageAgentRuntimeConfig,
@@ -77,7 +56,7 @@ export async function createPageAgentDriver(
       strategy: Strategy,
       mode: ExecutionMode,
     ): Promise<ExecutionResult> {
-      const values = nonEmptyValues(strategy);
+      const values = strategyValues(strategy);
 
       if (mode === "review") {
         return { status: "preview", adapter: "page-agent", values };
@@ -96,4 +75,3 @@ export async function createPageAgentDriver(
     },
   };
 }
-

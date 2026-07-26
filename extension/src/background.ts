@@ -53,6 +53,8 @@ export function createBackgroundCoordinator({
   now = () => new Date(),
   randomId = () => crypto.randomUUID(),
 }: CoordinatorDependencies) {
+  let cancelRequested = false;
+
   async function loadSession(): Promise<ConnectorSession> {
     return (await chromeAdapter.getSession()) ?? createEmptySession();
   }
@@ -238,6 +240,153 @@ export function createBackgroundCoordinator({
     };
   }
 
+  async function executeSelectedStrategy() {
+    const session = await loadSession();
+    const strategy = session.strategies.find(
+      ({ id }) => id === session.selectedStrategyId,
+    );
+    if (!strategy) {
+      throw new Error("Choose one of Mochi's three strategies first.");
+    }
+
+    if (session.executionMode === "review") {
+      return {
+        status: "preview",
+        adapter: "page-agent",
+        values: Object.fromEntries(
+          Object.entries(strategy.fields)
+            .filter(([, field]) => field.value.trim().length > 0)
+            .map(([key, field]) => [key, field.value]),
+        ),
+        changedFields: 0,
+      };
+    }
+
+    const tab = await activeTab();
+    cancelRequested = false;
+    await saveSession(
+      reduceSession(session, { type: "execution-started" }),
+    );
+
+    if (session.executionMode === "autopilot") {
+      for (let countdown = 3; countdown > 0; countdown -= 1) {
+        await saveSession({
+          ...(await loadSession()),
+          executionCountdown: countdown,
+          status: "executing",
+        });
+        await delay(1_000);
+        if (cancelRequested) {
+          return {
+            status: "cancelled",
+            adapter: "page-agent",
+            values: {},
+            changedFields: 0,
+          };
+        }
+      }
+    }
+    await saveSession({
+      ...(await loadSession()),
+      executionCountdown: null,
+      status: "executing",
+    });
+
+    try {
+      await chromeAdapter.executeAgent(tab.id);
+      const result = (await chromeAdapter.sendTabMessage(tab.id, {
+        type: "RUN_PAGE_AGENT",
+        strategy,
+        mode: session.executionMode,
+      })) as {
+        error?: string;
+        status?: string;
+        changedFields?: number;
+        values?: Record<string, string>;
+      };
+      if (result?.error) {
+        throw new Error(result.error);
+      }
+      if (cancelRequested || result?.status === "cancelled") {
+        await saveSession({
+          ...(await loadSession()),
+          error: null,
+          executionCountdown: null,
+          status: "ready",
+        });
+        return {
+          status: "cancelled",
+          adapter: "page-agent",
+          values: result?.values ?? {},
+          changedFields: 0,
+        };
+      }
+
+      await saveSession(
+        reduceSession(await loadSession(), {
+          type: "execution-succeeded",
+          summary: {
+            tabId: tab.id,
+            changedFields: result?.changedFields ?? 0,
+            completedAt: now().toISOString(),
+          },
+        }),
+      );
+      return result;
+    } catch (error) {
+      if (cancelRequested) {
+        await saveSession({
+          ...(await loadSession()),
+          error: null,
+          executionCountdown: null,
+          status: "ready",
+        });
+        return {
+          status: "cancelled",
+          adapter: "page-agent",
+          values: {},
+          changedFields: 0,
+        };
+      }
+      await fail(error);
+      throw error;
+    } finally {
+      cancelRequested = false;
+    }
+  }
+
+  async function cancelExecution() {
+    cancelRequested = true;
+    const tab = await chromeAdapter.queryActiveTab();
+    if (isEligibleTab(tab)) {
+      await chromeAdapter
+        .sendTabMessage(tab.id, { type: "CANCEL_EXECUTION" })
+        .catch(() => undefined);
+    }
+    return saveSession({
+      ...(await loadSession()),
+      error: null,
+      executionCountdown: null,
+      status: "ready",
+    });
+  }
+
+  async function undoLastExecution() {
+    const session = await loadSession();
+    if (!session.lastExecution) {
+      throw new Error("There is no Mochi fill to undo.");
+    }
+    await chromeAdapter.sendTabMessage(session.lastExecution.tabId, {
+      type: "UNDO",
+    });
+    return saveSession({
+      ...session,
+      lastExecution: null,
+      error: null,
+      status: "ready",
+    });
+  }
+
   async function handle(rawMessage: unknown): Promise<unknown> {
     const message = parseConnectorMessage(rawMessage);
     if (!message) {
@@ -302,6 +451,12 @@ export function createBackgroundCoordinator({
         }
       case "FETCH_PAGE_AGENT":
         return fetchPageAgent(message.body);
+      case "EXECUTE":
+        return executeSelectedStrategy();
+      case "CANCEL_EXECUTION":
+        return cancelExecution();
+      case "UNDO":
+        return undoLastExecution();
       default:
         throw new Error(`Mochi has not enabled ${message.type} yet.`);
     }

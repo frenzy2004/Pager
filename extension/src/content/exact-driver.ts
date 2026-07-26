@@ -14,6 +14,20 @@ export interface ExactFillResult {
   skipped: string[];
 }
 
+export function snapshotSafeValues(root: Document): UndoEntry[] {
+  return discoverSafeFieldEntries(root).flatMap(({ field, elements }) =>
+    elements.map((element, ordinal) => ({
+      key: field.key,
+      ordinal,
+      value: element.value,
+      ...(element instanceof HTMLInputElement &&
+      (element.type === "checkbox" || element.type === "radio")
+        ? { checked: element.checked }
+        : {}),
+    })),
+  );
+}
+
 function dispatchControlEvents(element: SafeControl) {
   element.dispatchEvent(new Event("input", { bubbles: true }));
   element.dispatchEvent(new Event("change", { bubbles: true }));

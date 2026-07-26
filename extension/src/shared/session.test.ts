@@ -63,6 +63,7 @@ describe("connector session", () => {
       status: "idle",
       error: null,
       lastExecution: null,
+      executionCountdown: null,
     });
   });
 

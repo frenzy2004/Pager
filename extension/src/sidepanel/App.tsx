@@ -353,7 +353,9 @@ export function App({ runtime }: AppProps) {
             disabled={!selectedStrategy || working}
             onClick={() => void send({ type: "EXECUTE" })}
           >
-            Execute with {selectedStrategy?.label ?? "selected route"}
+            {session.executionCountdown
+              ? `Autopilot in ${session.executionCountdown}…`
+              : `Execute with ${selectedStrategy?.label ?? "selected route"}`}
             <span aria-hidden="true">↗</span>
           </button>
 

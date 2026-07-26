@@ -56,6 +56,7 @@ export interface ConnectorSession {
   status: ConnectorStatus;
   error: string | null;
   lastExecution: ExecutionSummary | null;
+  executionCountdown: number | null;
 }
 
 export type ConnectorMessage =

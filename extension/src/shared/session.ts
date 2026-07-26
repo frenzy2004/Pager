@@ -36,6 +36,7 @@ export function createEmptySession(): ConnectorSession {
     status: "idle",
     error: null,
     lastExecution: null,
+    executionCountdown: null,
   };
 }
 
@@ -82,15 +83,26 @@ export function reduceSession(
     case "mode-changed":
       return { ...state, executionMode: action.mode };
     case "execution-started":
-      return { ...state, error: null, status: "executing" };
+      return {
+        ...state,
+        error: null,
+        executionCountdown: null,
+        status: "executing",
+      };
     case "execution-succeeded":
       return {
         ...state,
         lastExecution: action.summary,
+        executionCountdown: null,
         status: "ready",
       };
     case "failed":
-      return { ...state, error: action.error, status: "error" };
+      return {
+        ...state,
+        error: action.error,
+        executionCountdown: null,
+        status: "error",
+      };
     case "cleared":
       return createEmptySession();
   }
