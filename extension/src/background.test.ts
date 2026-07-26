@@ -110,6 +110,46 @@ describe("background coordinator", () => {
     );
   });
 
+  it("freezes one captured frame, crops it in-page, and stores a region", async () => {
+    const chromeAdapter = adapter();
+    vi.mocked(chromeAdapter.sendTabMessage).mockImplementation(
+      async (_tabId, message) => {
+        if (message.type === "BEGIN_FROZEN_SNIP") {
+          return {
+            dataUrl: "data:image/jpeg;base64,Y3JvcA==",
+            rect: { x: 20, y: 30, width: 400, height: 220 },
+          };
+        }
+        return { ok: true };
+      },
+    );
+    const normalizeImage = vi.fn(async (dataUrl) => dataUrl);
+    const coordinator = createBackgroundCoordinator({
+      chrome: chromeAdapter,
+      delay: vi.fn().mockResolvedValue(undefined),
+      fetch: vi.fn(),
+      normalizeImage,
+    });
+
+    await coordinator.handle({ type: "START_SNIP" });
+
+    expect(chromeAdapter.captureVisibleTab).toHaveBeenCalledTimes(1);
+    expect(chromeAdapter.sendTabMessage).toHaveBeenNthCalledWith(
+      3,
+      7,
+      {
+        type: "BEGIN_FROZEN_SNIP",
+        dataUrl: "data:image/jpeg;base64,Y2FwdHVyZQ==",
+      },
+    );
+    expect(normalizeImage).toHaveBeenCalledWith(
+      "data:image/jpeg;base64,Y3JvcA==",
+    );
+    expect((await chromeAdapter.getSession()).captures[0]).toMatchObject({
+      kind: "region",
+    });
+  });
+
   it("posts analysis and Page Agent calls only to fixed Vercel routes", async () => {
     const chromeAdapter = adapter();
     await chromeAdapter.setSession({

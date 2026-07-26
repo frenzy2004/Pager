@@ -82,6 +82,18 @@ export function createBackgroundCoordinator({
     return message;
   }
 
+  async function captureActiveFrame(tab: ActiveTab) {
+    try {
+      await chromeAdapter.sendTabMessage(tab.id, { type: "HIDE_PET" });
+      await delay(80);
+      return await chromeAdapter.captureVisibleTab(tab.windowId);
+    } finally {
+      await chromeAdapter
+        .sendTabMessage(tab.id, { type: "SHOW_PET" })
+        .catch(() => undefined);
+    }
+  }
+
   async function captureViewport() {
     const tab = await activeTab();
     const current = await loadSession();
@@ -91,21 +103,8 @@ export function createBackgroundCoordinator({
       status: "capturing",
     });
 
-    let rawCapture: string;
     try {
-      await chromeAdapter.sendTabMessage(tab.id, { type: "HIDE_PET" });
-      await delay(80);
-      rawCapture = await chromeAdapter.captureVisibleTab(tab.windowId);
-    } catch (error) {
-      await fail(error);
-      throw error;
-    } finally {
-      await chromeAdapter
-        .sendTabMessage(tab.id, { type: "SHOW_PET" })
-        .catch(() => undefined);
-    }
-
-    try {
+      const rawCapture = await captureActiveFrame(tab);
       const dataUrl = await normalizeImage(rawCapture);
       return saveSession(
         reduceSession(await loadSession(), {
@@ -117,6 +116,49 @@ export function createBackgroundCoordinator({
             sourceTitle: tab.title,
             capturedAt: now().toISOString(),
             kind: "viewport",
+          },
+        }),
+      );
+    } catch (error) {
+      await fail(error);
+      throw error;
+    }
+  }
+
+  async function captureRegion() {
+    const tab = await activeTab();
+    const current = await loadSession();
+    await saveSession({
+      ...current,
+      error: null,
+      status: "capturing",
+    });
+    try {
+      const frozenFrame = await captureActiveFrame(tab);
+      const result = (await chromeAdapter.sendTabMessage(tab.id, {
+        type: "BEGIN_FROZEN_SNIP",
+        dataUrl: frozenFrame,
+      })) as { dataUrl?: string; error?: string } | null;
+      if (!result) {
+        return saveSession({
+          ...(await loadSession()),
+          status: current.strategies.length > 0 ? "ready" : "idle",
+        });
+      }
+      if (result.error || !result.dataUrl) {
+        throw new Error(result.error ?? "Mochi could not crop that capture.");
+      }
+      const dataUrl = await normalizeImage(result.dataUrl);
+      return saveSession(
+        reduceSession(await loadSession(), {
+          type: "capture-added",
+          capture: {
+            id: randomId(),
+            dataUrl,
+            sourceUrl: tab.url,
+            sourceTitle: tab.title,
+            capturedAt: now().toISOString(),
+            kind: "region",
           },
         }),
       );
@@ -212,6 +254,8 @@ export function createBackgroundCoordinator({
       }
       case "CAPTURE_VIEWPORT":
         return captureViewport();
+      case "START_SNIP":
+        return captureRegion();
       case "REMOVE_CAPTURE":
         return saveSession(
           reduceSession(await loadSession(), {
