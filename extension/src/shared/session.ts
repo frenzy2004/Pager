@@ -4,6 +4,7 @@ import type {
   ConnectorSession,
   ExecutionMode,
   ExecutionSummary,
+  Preset,
   Strategy,
 } from "./protocol";
 
@@ -13,6 +14,7 @@ export const MAX_CAPTURE_DATA_URL_LENGTH = 850_000;
 export type SessionAction =
   | { type: "capture-added"; capture: CaptureItem }
   | { type: "capture-removed"; captureId: string }
+  | { type: "preset-changed"; preset: Preset }
   | { type: "task-hint-changed"; taskHint: string }
   | { type: "analysis-started" }
   | { type: "analysis-succeeded"; strategies: Strategy[] }
@@ -26,6 +28,7 @@ export type SessionAction =
 export function createEmptySession(): ConnectorSession {
   return {
     captures: [],
+    preset: "general",
     taskHint: "",
     strategies: [],
     selectedStrategyId: null,
@@ -55,6 +58,8 @@ export function reduceSession(
           ({ id }) => id !== action.captureId,
         ),
       };
+    case "preset-changed":
+      return { ...state, preset: action.preset };
     case "task-hint-changed":
       return { ...state, taskHint: action.taskHint.slice(0, 800) };
     case "analysis-started":
@@ -101,6 +106,10 @@ function hasOnlyType(value: Record<string, unknown>): boolean {
 
 function isMode(value: unknown): value is ExecutionMode {
   return value === "review" || value === "fill" || value === "autopilot";
+}
+
+function isPreset(value: unknown): value is Preset {
+  return value === "job" || value === "lead" || value === "general";
 }
 
 function isStrategyId(value: unknown): value is Strategy["id"] {
@@ -168,6 +177,10 @@ export function parseConnectorMessage(value: unknown): ConnectorMessage | null {
     value.taskHint.length <= 800
   ) {
     return { type: value.type, taskHint: value.taskHint };
+  }
+
+  if (value.type === "SET_PRESET" && isPreset(value.preset)) {
+    return { type: value.type, preset: value.preset };
   }
 
   if (value.type === "SELECT_STRATEGY" && isStrategyId(value.strategyId)) {

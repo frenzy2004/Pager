@@ -26,7 +26,8 @@ const strategies: Strategy[] = [
     rationale: "Use only supported facts.",
     confidence: 0.94,
     accent: "sage",
-    fields: [],
+    fields: {},
+    sources: [],
   },
   {
     id: "balanced",
@@ -35,7 +36,8 @@ const strategies: Strategy[] = [
     rationale: "Blend facts and careful drafts.",
     confidence: 0.87,
     accent: "violet",
-    fields: [],
+    fields: {},
+    sources: [],
   },
   {
     id: "standout",
@@ -44,7 +46,8 @@ const strategies: Strategy[] = [
     rationale: "Use a stronger voice.",
     confidence: 0.79,
     accent: "coral",
-    fields: [],
+    fields: {},
+    sources: [],
   },
 ];
 
@@ -52,6 +55,7 @@ describe("connector session", () => {
   it("starts safe and empty", () => {
     expect(createEmptySession()).toEqual({
       captures: [],
+      preset: "general",
       taskHint: "",
       strategies: [],
       selectedStrategyId: null,
@@ -104,6 +108,7 @@ describe("connector session", () => {
       strategyId: "safe",
     });
     state = reduceSession(state, { type: "mode-changed", mode: "fill" });
+    state = reduceSession(state, { type: "preset-changed", preset: "lead" });
     state = reduceSession(state, {
       type: "failed",
       error: "The active page is unsupported.",
@@ -112,6 +117,7 @@ describe("connector session", () => {
     expect(state).toMatchObject({
       selectedStrategyId: "safe",
       executionMode: "fill",
+      preset: "lead",
       status: "error",
       error: "The active page is unsupported.",
     });

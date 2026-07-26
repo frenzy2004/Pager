@@ -1,4 +1,5 @@
 export type ExecutionMode = "review" | "fill" | "autopilot";
+export type Preset = "job" | "lead" | "general";
 export type ConnectorStatus =
   | "idle"
   | "capturing"
@@ -17,7 +18,6 @@ export interface CaptureItem {
 }
 
 export interface FieldSuggestion {
-  key: string;
   value: string;
   status: "supported" | "researched" | "draft" | "needs-input";
   confidence: number;
@@ -31,7 +31,13 @@ export interface Strategy {
   rationale: string;
   confidence: number;
   accent: "sage" | "violet" | "coral";
-  fields: FieldSuggestion[];
+  fields: Record<string, FieldSuggestion>;
+  sources: Array<{
+    id: string;
+    title: string;
+    url: string;
+    snippet?: string;
+  }>;
 }
 
 export interface ExecutionSummary {
@@ -42,6 +48,7 @@ export interface ExecutionSummary {
 
 export interface ConnectorSession {
   captures: CaptureItem[];
+  preset: Preset;
   taskHint: string;
   strategies: Strategy[];
   selectedStrategyId: Strategy["id"] | null;
@@ -58,6 +65,7 @@ export type ConnectorMessage =
   | { type: "START_SNIP" }
   | { type: "REMOVE_CAPTURE"; captureId: string }
   | { type: "CLEAR_SESSION" }
+  | { type: "SET_PRESET"; preset: Preset }
   | { type: "SET_TASK_HINT"; taskHint: string }
   | { type: "ANALYZE" }
   | { type: "SELECT_STRATEGY"; strategyId: Strategy["id"] }
