@@ -3,7 +3,6 @@
 import {
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -142,12 +141,9 @@ export function MochiOverlay({
   const [busy, setBusy] = useState(false);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
 
-  const selectedStrategy = useMemo(
-    () =>
-      analysis?.strategies.find((strategy) => strategy.id === selectedId) ??
-      analysis?.strategies[1],
-    [analysis, selectedId],
-  );
+  const selectedStrategy =
+    analysis?.strategies.find((strategy) => strategy.id === selectedId) ??
+    analysis?.strategies[1];
 
   const addFiles = useCallback(
     async (files: File[]) => {

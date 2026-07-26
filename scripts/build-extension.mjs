@@ -24,10 +24,15 @@ await build({
     content: "extension/src/content/content.ts",
     sidepanel: "extension/src/sidepanel/main.tsx",
   },
+  define: {
+    "process.env.NODE_ENV": '"production"',
+  },
   format: "iife",
+  legalComments: "none",
   loader: {
     ".css": "css",
   },
+  minify: true,
   outdir: outputDirectory,
   sourcemap: false,
   target: "chrome116",

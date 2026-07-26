@@ -1,7 +1,6 @@
 import { createChromeAdapter, type ActiveTab, type ChromeAdapter } from "./shared/chrome";
 import { normalizeCapturedImage } from "./shared/image-policy";
 import type {
-  ConnectorMessage,
   ConnectorSession,
   PageAgentFetchResponse,
   Strategy,
@@ -15,6 +14,7 @@ import {
 export const MOCHI_ORIGIN = "https://mochi-overlay.vercel.app";
 export const ANALYZE_URL = `${MOCHI_ORIGIN}/api/analyze`;
 export const PAGE_AGENT_URL = `${MOCHI_ORIGIN}/api/page-agent/chat/completions`;
+const CAPTURE_INTERVAL_MS = 550;
 
 interface CoordinatorDependencies {
   chrome: ChromeAdapter;
@@ -54,6 +54,8 @@ export function createBackgroundCoordinator({
   randomId = () => crypto.randomUUID(),
 }: CoordinatorDependencies) {
   let cancelRequested = false;
+  let captureQueue: Promise<void> = Promise.resolve();
+  let nextCaptureAt = 0;
 
   async function loadSession(): Promise<ConnectorSession> {
     return (await chromeAdapter.getSession()) ?? createEmptySession();
@@ -84,7 +86,7 @@ export function createBackgroundCoordinator({
     return message;
   }
 
-  async function captureActiveFrame(tab: ActiveTab) {
+  async function captureActiveFrameNow(tab: ActiveTab) {
     try {
       await chromeAdapter.sendTabMessage(tab.id, { type: "HIDE_PET" });
       await delay(80);
@@ -94,6 +96,24 @@ export function createBackgroundCoordinator({
         .sendTabMessage(tab.id, { type: "SHOW_PET" })
         .catch(() => undefined);
     }
+  }
+
+  function captureActiveFrame(tab: ActiveTab) {
+    const capture = captureQueue.then(async () => {
+      const currentTime = now().getTime();
+      const scheduledTime = Math.max(currentTime, nextCaptureAt);
+      const waitTime = scheduledTime - currentTime;
+      if (waitTime > 0) {
+        await delay(waitTime);
+      }
+      nextCaptureAt = scheduledTime + CAPTURE_INTERVAL_MS;
+      return captureActiveFrameNow(tab);
+    });
+    captureQueue = capture.then(
+      () => undefined,
+      () => undefined,
+    );
+    return capture;
   }
 
   async function captureViewport() {

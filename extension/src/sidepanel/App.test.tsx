@@ -73,17 +73,13 @@ function readySession(): ConnectorSession {
 function runtime(session: ConnectorSession): SidePanelRuntime & {
   sendMessage: ReturnType<typeof vi.fn>;
 } {
-  let listener: ((message: ConnectorMessage) => void) | undefined;
   const sendMessage = vi.fn(async (message: ConnectorMessage) => ({
     ok: true,
     result: message.type === "GET_SESSION" ? session : session,
   }));
   return {
-    addMessageListener(next) {
-      listener = next;
-      return () => {
-        listener = undefined;
-      };
+    addMessageListener() {
+      return () => undefined;
     },
     sendMessage,
   };

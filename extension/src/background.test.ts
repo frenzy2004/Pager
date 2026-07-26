@@ -90,6 +90,33 @@ describe("background coordinator", () => {
     });
   });
 
+  it("queues rapid captures below Chrome's two-per-second quota", async () => {
+    const chromeAdapter = adapter();
+    let clock = Date.parse("2026-07-26T12:00:00.000Z");
+    const captureTimes: number[] = [];
+    vi.mocked(chromeAdapter.captureVisibleTab).mockImplementation(async () => {
+      captureTimes.push(clock);
+      return "data:image/jpeg;base64,Y2FwdHVyZQ==";
+    });
+    const coordinator = createBackgroundCoordinator({
+      chrome: chromeAdapter,
+      delay: vi.fn(async (milliseconds: number) => {
+        clock += milliseconds;
+      }),
+      fetch: vi.fn(),
+      normalizeImage: vi.fn(async (dataUrl) => dataUrl),
+      now: () => new Date(clock),
+    });
+
+    await coordinator.handle({ type: "CAPTURE_VIEWPORT" });
+    await coordinator.handle({ type: "CAPTURE_VIEWPORT" });
+    await coordinator.handle({ type: "CAPTURE_VIEWPORT" });
+
+    expect(captureTimes).toHaveLength(3);
+    expect(captureTimes[1] - captureTimes[0]).toBeGreaterThanOrEqual(500);
+    expect(captureTimes[2] - captureTimes[1]).toBeGreaterThanOrEqual(500);
+  });
+
   it("restores the pet even when Chrome capture fails", async () => {
     const chromeAdapter = adapter();
     vi.mocked(chromeAdapter.captureVisibleTab).mockRejectedValue(

@@ -1,5 +1,6 @@
 import {
   PageAgent,
+  type ExecutionResult,
   type PageAgentConfig,
 } from "page-agent";
 
@@ -31,7 +32,7 @@ export interface AgentRuntime {
 
 interface PageAgentLike {
   dispose(): void;
-  execute(task: string): Promise<unknown>;
+  execute(task: string): Promise<ExecutionResult>;
   stop(): Promise<void>;
 }
 
@@ -133,7 +134,10 @@ export function createPageAgentExecutor({
       });
       activeAgent = agent;
       try {
-        await agent.execute(buildPageAgentTask(strategy, mode));
+        const result = await agent.execute(buildPageAgentTask(strategy, mode));
+        if (!result.success) {
+          throw new Error(result.data || "Page Agent could not finish.");
+        }
       } catch (error) {
         if (Object.keys(values).length === 0) {
           throw error;

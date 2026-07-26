@@ -71,6 +71,7 @@ describe("Alibaba Page Agent connector executor", () => {
     const execute = vi.fn().mockImplementation(async () => {
       document.querySelector<HTMLInputElement>("[name=name]")!.value =
         "Jamie Chen";
+      return { success: true, data: "Filled", history: [] };
     });
     const stop = vi.fn().mockResolvedValue(undefined);
     const dispose = vi.fn();
@@ -126,6 +127,7 @@ describe("Alibaba Page Agent connector executor", () => {
         execute: async () => {
           document.querySelector<HTMLInputElement>("[name=name]")!.value =
             "Jamie Chen";
+          return { success: true, data: "Filled", history: [] };
         },
         stop: vi.fn().mockResolvedValue(undefined),
       }),
@@ -157,6 +159,33 @@ describe("Alibaba Page Agent connector executor", () => {
       status: "filled",
       adapter: "exact-fallback",
       changedFields: 1,
+    });
+    expect(execute).toHaveBeenCalledOnce();
+    expect(
+      document.querySelector<HTMLInputElement>("[name=name]")!.value,
+    ).toBe("Jamie Chen");
+  });
+
+  it("treats a resolved Page Agent failure as a failure before falling back", async () => {
+    const execute = vi.fn().mockResolvedValue({
+      success: false,
+      data: "Invalid model tool response",
+      history: [],
+    });
+    const executor = createPageAgentExecutor({
+      createAgent: () => ({
+        dispose: vi.fn(),
+        execute,
+        stop: vi.fn().mockResolvedValue(undefined),
+      }),
+      document,
+      runtime: runtime(),
+    });
+
+    await expect(executor.run(strategy, "fill")).resolves.toMatchObject({
+      status: "filled",
+      adapter: "exact-fallback",
+      warning: expect.stringContaining("exact field mappings"),
     });
     expect(execute).toHaveBeenCalledOnce();
     expect(

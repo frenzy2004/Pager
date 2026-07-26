@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -44,5 +44,12 @@ describe("Chrome connector artifacts", () => {
         "sidepanel.js",
       ]),
     );
+
+    expect(
+      statSync(path.join(root, "extension/dist/sidepanel.js")).size,
+    ).toBeLessThan(250_000);
+    expect(
+      statSync(path.join(root, "extension/dist/agent.js")).size,
+    ).toBeLessThan(500_000);
   });
 });

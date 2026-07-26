@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import type {
   ConnectorMessage,
@@ -84,13 +84,10 @@ export function App({ runtime }: AppProps) {
   const [working, setWorking] = useState(false);
   const [localError, setLocalError] = useState("");
 
-  const selectedStrategy = useMemo(
-    () =>
-      session.strategies.find(
-        ({ id }) => id === session.selectedStrategyId,
-      ) ?? null,
-    [session.selectedStrategyId, session.strategies],
-  );
+  const selectedStrategy =
+    session.strategies.find(
+      ({ id }) => id === session.selectedStrategyId,
+    ) ?? null;
 
   useEffect(() => {
     let active = true;
@@ -226,6 +223,7 @@ export function App({ runtime }: AppProps) {
               {session.captures.map((capture, index) => (
                 <article className="capture-card" key={capture.id}>
                   {/* The pixels remain local until the user presses Analyze. */}
+                  {/* eslint-disable-next-line @next/next/no-img-element -- Extension data URLs cannot use Next Image. */}
                   <img src={capture.dataUrl} alt="" />
                   <div>
                     <strong>{capture.sourceTitle}</strong>
