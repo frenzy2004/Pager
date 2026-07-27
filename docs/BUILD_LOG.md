@@ -159,3 +159,40 @@ This file records verified checkpoints, failures, and corrective decisions.
   desktop-only unpacked-extension scenario; `npm audit` reports zero
   vulnerabilities. An independent final code review returned GO with no
   remaining correctness or security blocker.
+
+## 2026-07-27 — BYOK Chrome extension release
+
+- **Private provider setup:** users enter their own OpenAI key inside the
+  extension; Exa is optional. Keys stay in `chrome.storage.local`, are
+  restricted to trusted extension contexts, and are never returned to content
+  scripts, embedded in the bundle, or sent through the Mochi Vercel API.
+- **Direct AI path:** screenshot analysis calls OpenAI directly. When public
+  context is genuinely missing and Exa is configured, Mochi performs one
+  bounded Exa search and gives the evidence back to OpenAI for refinement.
+  Results remain constrained to exactly three strategies.
+- **Direct action path:** Alibaba Page Agent `1.12.2` now uses the user's
+  OpenAI key directly with the pinned `gpt-5.6-sol` model and Mochi's restricted
+  macro-tool envelope. Fill still cannot submit, stays inside the reviewed form
+  boundary, and preserves Undo.
+- **Permission regression:** the first GitHub extension run exposed that
+  generic provider host patterns were insufficient for repeated
+  `captureVisibleTab` calls after switching tabs. Restoring Chrome's required
+  `<all_urls>` permission fixed cross-tab capture while retaining explicit
+  OpenAI and Exa hosts.
+- **Fresh local gate:** ESLint and TypeScript pass; 28 Vitest files / 151 tests
+  pass; the Next.js production build completes; and the packaged ZIP contains
+  the provider hosts without bundled credentials or references to the Mochi
+  server AI route.
+- **Real Chromium gate:** GitHub Actions run `30240890136` passed the complete
+  release gate on commit `4e022f98cfb409bc232a18263040388de5021501`.
+  The unpacked-extension flow saved and tested OpenAI plus optional Exa keys,
+  captured two tabs plus a region into one three-item tray, completed direct
+  OpenAI → Exa → OpenAI analysis, rendered exactly three routes, ran direct
+  Page Agent fill without submission, undid the fill, cleared keys without
+  clearing captures, and observed zero Mochi server AI requests.
+- **Production deployment:** Vercel deployment
+  `dpl_Eg5Bi2GWsQWKPs6Eziz1mUfewCXQ` built successfully, is `Ready`, and is
+  aliased at `https://mochi-overlay.vercel.app`. Its Vercel error-log window was
+  empty. The in-app browser's enterprise network policy blocked an additional
+  manual visit to that domain, so the release relies on the green real-Chromium
+  gate rather than bypassing that policy.
