@@ -1,6 +1,18 @@
 import { createChromeAdapter, type ActiveTab, type ChromeAdapter } from "./shared/chrome";
 import { normalizeCapturedImage } from "./shared/image-policy";
 import { solveProofOfWork } from "./shared/proof-of-work";
+import {
+  runProviderAnalysis,
+  type ProviderAnalysisInput,
+} from "./providers/analysis";
+import { testExaKey } from "./providers/exa";
+import { testOpenAIKey } from "./providers/openai";
+import {
+  createUntestedProviderSettings,
+  markProviderValidation,
+  providerStatus,
+  type ProviderSettings,
+} from "./shared/provider-settings";
 import type {
   AnalysisTarget,
   ConnectorMessage,
@@ -17,7 +29,6 @@ import {
 } from "./shared/session";
 
 export const MOCHI_ORIGIN = "https://mochi-overlay.vercel.app";
-export const ANALYZE_URL = `${MOCHI_ORIGIN}/api/analyze`;
 export const CONNECTOR_SESSION_URL = `${MOCHI_ORIGIN}/api/connector/session`;
 export const PAGE_AGENT_URL = `${MOCHI_ORIGIN}/api/page-agent/chat/completions`;
 export const MOCHI_EXTENSION_ID = "fljecmlbnknpeehjcffenmjjnenmkjea";
@@ -49,34 +60,26 @@ interface CoordinatorDependencies {
   randomId?: () => string;
 }
 
+interface RuntimeSender {
+  id?: string;
+  url?: string;
+}
+
 function isEligibleTab(tab: ActiveTab | null): tab is ActiveTab {
   return Boolean(tab && /^https?:\/\//.test(tab.url));
 }
 
-function isStrategy(value: unknown): value is Strategy {
-  if (typeof value !== "object" || value === null) {
-    return false;
-  }
-  const strategy = value as Partial<Strategy>;
-  return (
-    (strategy.id === "safe" ||
-      strategy.id === "balanced" ||
-      strategy.id === "standout") &&
-    typeof strategy.label === "string" &&
-    typeof strategy.rationale === "string" &&
-    typeof strategy.fields === "object" &&
-    strategy.fields !== null
-  );
-}
-
 interface FieldManifest {
   documentId: string;
-  fields: unknown[];
+  fields: ProviderAnalysisInput["fields"];
 }
 
 function isFieldManifest(value: unknown): value is FieldManifest {
   if (typeof value !== "object" || value === null) return false;
-  const manifest = value as Partial<FieldManifest>;
+  const manifest = value as {
+    documentId?: unknown;
+    fields?: unknown;
+  };
   const fieldTypes = new Set([
     "text",
     "email",
@@ -94,9 +97,9 @@ function isFieldManifest(value: unknown): value is FieldManifest {
     manifest.fields.length > 0 &&
     manifest.fields.length <= 30 &&
     JSON.stringify(manifest.fields).length <= 100_000 &&
-    manifest.fields.every((value) => {
-      if (typeof value !== "object" || value === null) return false;
-      const field = value as Record<string, unknown>;
+    manifest.fields.every((fieldValue) => {
+      if (typeof fieldValue !== "object" || fieldValue === null) return false;
+      const field = fieldValue as Record<string, unknown>;
       return (
         typeof field.key === "string" &&
         /^[A-Za-z0-9_-]{1,80}$/.test(field.key) &&
@@ -176,6 +179,124 @@ export function createBackgroundCoordinator({
   let activeExecutionOperation: Promise<unknown> | null = null;
   let clearOperationClaimed = false;
   let nextCaptureAt = 0;
+  let credentialRevision = 0;
+  const activeProviderControllers = new Set<AbortController>();
+
+  function isExtensionView(sender?: RuntimeSender) {
+    return (
+      sender?.id === extensionId &&
+      sender.url?.startsWith(`chrome-extension://${extensionId}/`) === true
+    );
+  }
+
+  function assertSettingsSender(sender?: RuntimeSender) {
+    if (!isExtensionView(sender)) {
+      throw new Error(
+        "Mochi settings can only be changed from the extension.",
+      );
+    }
+  }
+
+  function invalidateProviderOperations() {
+    credentialRevision += 1;
+    for (const controller of activeProviderControllers) {
+      controller.abort();
+    }
+    activeProviderControllers.clear();
+    return credentialRevision;
+  }
+
+  async function withProviderOperation<T>(
+    revision: number,
+    operation: (signal: AbortSignal) => Promise<T>,
+  ) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 60_000);
+    activeProviderControllers.add(controller);
+    try {
+      const result = await operation(controller.signal);
+      if (revision !== credentialRevision) {
+        throw new Error(
+          "Provider settings changed while Mochi was working.",
+        );
+      }
+      return result;
+    } finally {
+      clearTimeout(timeout);
+      activeProviderControllers.delete(controller);
+    }
+  }
+
+  async function testAndStoreProviderSettings(
+    initial: ProviderSettings,
+  ) {
+    const revision = invalidateProviderOperations();
+    let settings = initial;
+    const checkedAt = now().toISOString();
+    try {
+      await withProviderOperation(revision, (signal) =>
+        testOpenAIKey(
+          settings.openAIApiKey,
+          fetchFromVercel,
+          signal,
+        ),
+      );
+      settings = markProviderValidation(
+        settings,
+        "openAI",
+        "valid",
+        checkedAt,
+      );
+    } catch (error) {
+      if (revision !== credentialRevision) throw error;
+      settings = markProviderValidation(
+        settings,
+        "openAI",
+        "invalid",
+        checkedAt,
+      );
+      await chromeAdapter.setProviderSettings(settings);
+      throw error;
+    }
+
+    if (settings.exaApiKey) {
+      try {
+        await withProviderOperation(revision, (signal) =>
+          testExaKey(
+            settings.exaApiKey!,
+            fetchFromVercel,
+            signal,
+          ),
+        );
+        settings = markProviderValidation(
+          settings,
+          "exa",
+          "valid",
+          checkedAt,
+        );
+      } catch {
+        if (revision !== credentialRevision) {
+          throw new Error(
+            "Provider settings changed while Mochi was working.",
+          );
+        }
+        settings = markProviderValidation(
+          settings,
+          "exa",
+          "invalid",
+          checkedAt,
+        );
+      }
+    }
+
+    if (revision !== credentialRevision) {
+      throw new Error(
+        "Provider settings changed while Mochi was working.",
+      );
+    }
+    await chromeAdapter.setProviderSettings(settings);
+    return providerStatus(settings);
+  }
 
   async function loadSession(): Promise<ConnectorSession> {
     return (await chromeAdapter.getSession()) ?? createEmptySession();
@@ -551,6 +672,12 @@ export function createBackgroundCoordinator({
     if (session.captures.length === 0) {
       throw new Error("Capture at least one page before analysis.");
     }
+    const settings = await chromeAdapter.getProviderSettings();
+    if (!settings || settings.openAIValidation.status !== "valid") {
+      throw new Error(
+        "Add and test your OpenAI key in Settings before analysis.",
+      );
+    }
     const tab = await activeTab();
     const manifest = await discoverFieldManifest(tab.id);
 
@@ -562,49 +689,20 @@ export function createBackgroundCoordinator({
       preset: session.preset,
       taskHint: session.taskHint,
     });
-    const requestBody = JSON.stringify({
-        preset: session.preset,
-        taskHint: session.taskHint,
-        screenshots: session.captures.map(
-          ({ dataUrl, sourceUrl, sourceTitle, capturedAt, kind }) => ({
-            dataUrl,
-            sourceUrl,
-            sourceTitle,
-            capturedAt,
-            kind,
-          }),
-        ),
-        fields: manifest.fields,
-      });
-    async function requestAnalysis(forceRefresh = false) {
-      return fetchFromVercel(ANALYZE_URL, {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${await getConnectorToken(forceRefresh)}`,
-          "content-type": "application/json",
-          "x-mochi-extension-id": extensionId,
+    const revision = credentialRevision;
+    const result = await withProviderOperation(revision, (signal) =>
+      runProviderAnalysis(
+        {
+          preset: session.preset,
+          taskHint: session.taskHint,
+          screenshots: session.captures,
+          fields: manifest.fields,
         },
-        body: requestBody,
-      });
-    }
-    let response = await requestAnalysis();
-    if (response.status === 401) {
-      connectorToken = null;
-      response = await requestAnalysis(true);
-    }
-    const body = (await response.json()) as {
-      error?: string;
-      strategies?: unknown[];
-    };
-    if (!response.ok) {
-      throw new Error(body.error ?? `Analysis failed (${response.status}).`);
-    }
-    if (
-      body.strategies?.length !== 3 ||
-      !body.strategies.every(isStrategy)
-    ) {
-      throw new Error("Vercel returned an invalid three-strategy response.");
-    }
+        settings,
+        fetchFromVercel,
+        signal,
+      ),
+    );
 
     const latest = await loadSession();
     const latestContextKey = JSON.stringify({
@@ -621,7 +719,7 @@ export function createBackgroundCoordinator({
     return saveSession(
       reduceSession(latest, {
         type: "analysis-succeeded",
-        strategies: body.strategies,
+        strategies: result.strategies,
         target: {
           tabId: tab.id,
           windowId: tab.windowId,
@@ -1411,6 +1509,7 @@ export function createBackgroundCoordinator({
     message: ConnectorMessage,
     requestedClearGeneration: number,
     executionWasClaimed: boolean,
+    sender?: RuntimeSender,
   ): Promise<unknown> {
     const liveSession = await loadSession();
     if (
@@ -1424,6 +1523,10 @@ export function createBackgroundCoordinator({
       liveSession.executionLease &&
       ![
         "GET_SESSION",
+        "GET_PROVIDER_STATUS",
+        "SAVE_AND_TEST_PROVIDER_SETTINGS",
+        "RETEST_PROVIDER_SETTINGS",
+        "CLEAR_PROVIDER_SETTINGS",
         "OPEN_PANEL",
         "FETCH_PAGE_AGENT",
         "AUTHORIZE_SUBMIT",
@@ -1440,6 +1543,37 @@ export function createBackgroundCoordinator({
     switch (message.type) {
       case "GET_SESSION":
         return loadSession();
+      case "GET_PROVIDER_STATUS":
+        return providerStatus(
+          await chromeAdapter.getProviderSettings(),
+        );
+      case "SAVE_AND_TEST_PROVIDER_SETTINGS":
+        assertSettingsSender(sender);
+        return testAndStoreProviderSettings(
+          createUntestedProviderSettings({
+            openAIApiKey: message.openAIApiKey,
+            exaApiKey: message.exaApiKey,
+          }),
+        );
+      case "RETEST_PROVIDER_SETTINGS": {
+        assertSettingsSender(sender);
+        const settings = await chromeAdapter.getProviderSettings();
+        if (!settings) {
+          throw new Error("Add your OpenAI key before testing it.");
+        }
+        return testAndStoreProviderSettings({
+          ...settings,
+          openAIValidation: { status: "untested" },
+          ...(settings.exaApiKey
+            ? { exaValidation: { status: "untested" as const } }
+            : {}),
+        });
+      }
+      case "CLEAR_PROVIDER_SETTINGS":
+        assertSettingsSender(sender);
+        invalidateProviderOperations();
+        await chromeAdapter.clearProviderSettings();
+        return providerStatus(null);
       case "OPEN_PANEL": {
         const tab = await activeTab();
         await chromeAdapter.openPanel(tab.windowId);
@@ -1541,7 +1675,10 @@ export function createBackgroundCoordinator({
     }
   }
 
-  async function handle(rawMessage: unknown): Promise<unknown> {
+  async function handle(
+    rawMessage: unknown,
+    sender?: RuntimeSender,
+  ): Promise<unknown> {
     const message = parseConnectorMessage(rawMessage);
     if (!message) {
       throw new Error("Mochi ignored an invalid connector message.");
@@ -1583,6 +1720,7 @@ export function createBackgroundCoordinator({
         message,
         requestedClearGeneration,
         executionWasClaimed,
+        sender,
       );
     } finally {
       if (changesExecutionContext) {
@@ -1611,13 +1749,26 @@ if (typeof chrome !== "undefined" && chrome.runtime?.id) {
     extensionId: chrome.runtime.id,
   });
 
-  chrome.runtime.onInstalled.addListener(() => {
-    void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
-    void chromeAdapter.setSession(createEmptySession());
-  });
+  async function initializeExtension() {
+    await chromeAdapter.restrictLocalStorage();
+    await chrome.sidePanel.setPanelBehavior({
+      openPanelOnActionClick: true,
+    });
+    if (!(await chromeAdapter.getSession())) {
+      await chromeAdapter.setSession(createEmptySession());
+    }
+  }
 
-  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    void coordinator.handle(message).then(
+  chrome.runtime.onInstalled.addListener(() => {
+    void initializeExtension();
+  });
+  chrome.runtime.onStartup.addListener(() => {
+    void initializeExtension();
+  });
+  void chromeAdapter.restrictLocalStorage();
+
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    void coordinator.handle(message, sender).then(
       (result) => sendResponse({ ok: true, result }),
       (error: unknown) =>
         sendResponse({

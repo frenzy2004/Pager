@@ -3,7 +3,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createBackgroundCoordinator } from "./background";
 import { createEmptySession } from "./shared/session";
 import type { ChromeAdapter } from "./shared/chrome";
+import type { ProviderSettings } from "./shared/provider-settings";
 import type { ConnectorSession } from "./shared/protocol";
+
+const extensionId = "fljecmlbnknpeehjcffenmjjnenmkjea";
+const sidePanelSender = {
+  id: extensionId,
+  url: `chrome-extension://${extensionId}/sidepanel.html`,
+};
 
 function fieldManifest(documentId = "document-original") {
   return {
@@ -21,15 +28,18 @@ function fieldManifest(documentId = "document-original") {
 
 function adapter(): ChromeAdapter {
   let stored = createEmptySession();
+  let providerSettings: ProviderSettings | null = null;
   return {
     broadcast: vi.fn(),
     captureVisibleTab: vi
       .fn()
       .mockResolvedValue("data:image/jpeg;base64,Y2FwdHVyZQ=="),
-    clearProviderSettings: vi.fn(),
+    clearProviderSettings: vi.fn(async () => {
+      providerSettings = null;
+    }),
     executeAgent: vi.fn(),
     getInstallId: vi.fn().mockResolvedValue("install-id-stable"),
-    getProviderSettings: vi.fn().mockResolvedValue(null),
+    getProviderSettings: vi.fn(async () => providerSettings),
     getSession: vi.fn(async () => stored),
     getTab: vi.fn().mockResolvedValue({
       id: 7,
@@ -55,7 +65,9 @@ function adapter(): ChromeAdapter {
       return { ok: true };
     }),
     setInstallId: vi.fn(),
-    setProviderSettings: vi.fn(),
+    setProviderSettings: vi.fn(async (settings) => {
+      providerSettings = settings;
+    }),
     setSession: vi.fn(async (session) => {
       stored = session;
     }),
@@ -118,6 +130,91 @@ function analyzedSession(
     },
     status: "ready",
   };
+}
+
+function providerAnalysisResponse() {
+  return Response.json({
+    output: [
+      {
+        type: "message",
+        role: "assistant",
+        content: [
+          {
+            type: "output_text",
+            text: JSON.stringify({
+              pageSummary: "A one-field application.",
+              gaps: [],
+              researchQuery: null,
+              strategies: [
+                {
+                  id: "safe",
+                  label: "Safe & precise",
+                  eyebrow: "Facts",
+                  rationale: "Use verified facts.",
+                  confidence: 0.9,
+                  accent: "sage",
+                  fields: [
+                    {
+                      key: "name",
+                      value: "Jamie Chen",
+                      status: "supported",
+                      confidence: 1,
+                      sourceIds: [],
+                    },
+                  ],
+                },
+                {
+                  id: "balanced",
+                  label: "Balanced",
+                  eyebrow: "Best fit",
+                  rationale: "Balance confidence and care.",
+                  confidence: 0.86,
+                  accent: "violet",
+                  fields: [
+                    {
+                      key: "name",
+                      value: "Jamie Chen",
+                      status: "supported",
+                      confidence: 1,
+                      sourceIds: [],
+                    },
+                  ],
+                },
+                {
+                  id: "standout",
+                  label: "Standout",
+                  eyebrow: "Voice",
+                  rationale: "Use a memorable tone.",
+                  confidence: 0.8,
+                  accent: "coral",
+                  fields: [
+                    {
+                      key: "name",
+                      value: "Jamie Chen",
+                      status: "supported",
+                      confidence: 1,
+                      sourceIds: [],
+                    },
+                  ],
+                },
+              ],
+            }),
+          },
+        ],
+      },
+    ],
+  });
+}
+
+async function configureOpenAI(chromeAdapter: ChromeAdapter) {
+  await chromeAdapter.setProviderSettings({
+    version: 1,
+    openAIApiKey: "sk-openai-secret",
+    openAIValidation: {
+      status: "valid",
+      checkedAt: "2026-07-27T04:00:00.000Z",
+    },
+  });
 }
 
 describe("background coordinator", () => {
@@ -490,8 +587,136 @@ describe("background coordinator", () => {
     expect(await chromeAdapter.getSession()).toEqual(createEmptySession());
   });
 
-  it("posts analysis and Page Agent calls only to fixed Vercel routes", async () => {
+  it("reports provider status without returning raw settings", async () => {
     const chromeAdapter = adapter();
+    const coordinator = createBackgroundCoordinator({
+      chrome: chromeAdapter,
+      delay: vi.fn().mockResolvedValue(undefined),
+      fetch: vi.fn(),
+      normalizeImage: vi.fn(async (dataUrl) => dataUrl),
+    });
+
+    expect(
+      await coordinator.handle(
+        { type: "GET_PROVIDER_STATUS" },
+        sidePanelSender,
+      ),
+    ).toEqual({
+      configured: false,
+      openAI: "missing",
+      exa: "missing",
+    });
+  });
+
+  it("accepts credential changes only from an extension view", async () => {
+    const chromeAdapter = adapter();
+    const coordinator = createBackgroundCoordinator({
+      chrome: chromeAdapter,
+      delay: vi.fn().mockResolvedValue(undefined),
+      fetch: vi.fn(),
+      normalizeImage: vi.fn(async (dataUrl) => dataUrl),
+    });
+
+    await expect(
+      coordinator.handle(
+        {
+          type: "SAVE_AND_TEST_PROVIDER_SETTINGS",
+          openAIApiKey: "sk-openai-secret",
+        },
+        {
+          id: extensionId,
+          url: "https://forms.example.test/apply",
+        },
+      ),
+    ).rejects.toThrow(
+      "Mochi settings can only be changed from the extension.",
+    );
+    expect(await chromeAdapter.getProviderSettings()).toBeNull();
+  });
+
+  it("saves valid OpenAI while treating invalid optional Exa as non-blocking", async () => {
+    const chromeAdapter = adapter();
+    const fetchMock = vi.fn(async (input: string) =>
+      input.includes("api.exa.ai")
+        ? new Response("invalid", { status: 401 })
+        : new Response("{}", { status: 200 }),
+    );
+    const coordinator = createBackgroundCoordinator({
+      chrome: chromeAdapter,
+      delay: vi.fn().mockResolvedValue(undefined),
+      fetch: fetchMock,
+      normalizeImage: vi.fn(async (dataUrl) => dataUrl),
+      now: () => new Date("2026-07-27T04:00:00.000Z"),
+    });
+
+    const status = await coordinator.handle(
+      {
+        type: "SAVE_AND_TEST_PROVIDER_SETTINGS",
+        openAIApiKey: "sk-openai-secret",
+        exaApiKey: "exa-secret-key",
+      },
+      sidePanelSender,
+    );
+
+    expect(status).toEqual({
+      configured: true,
+      openAI: "valid",
+      exa: "invalid",
+    });
+    expect(await chromeAdapter.getProviderSettings()).toMatchObject({
+      openAIApiKey: "sk-openai-secret",
+      openAIValidation: {
+        status: "valid",
+        checkedAt: "2026-07-27T04:00:00.000Z",
+      },
+      exaValidation: {
+        status: "invalid",
+        checkedAt: "2026-07-27T04:00:00.000Z",
+      },
+    });
+    expect(JSON.stringify(status)).not.toContain("secret");
+  });
+
+  it("clears provider keys without deleting captured context", async () => {
+    const chromeAdapter = adapter();
+    await configureOpenAI(chromeAdapter);
+    await chromeAdapter.setSession({
+      ...createEmptySession(),
+      captures: [
+        {
+          id: "capture-1",
+          dataUrl: "data:image/jpeg;base64,Y2FwdHVyZQ==",
+          sourceUrl: "https://forms.example.test/apply",
+          sourceTitle: "Application",
+          capturedAt: "2026-07-27T04:00:00.000Z",
+          kind: "viewport",
+        },
+      ],
+    });
+    const coordinator = createBackgroundCoordinator({
+      chrome: chromeAdapter,
+      delay: vi.fn().mockResolvedValue(undefined),
+      fetch: vi.fn(),
+      normalizeImage: vi.fn(async (dataUrl) => dataUrl),
+    });
+
+    expect(
+      await coordinator.handle(
+        { type: "CLEAR_PROVIDER_SETTINGS" },
+        sidePanelSender,
+      ),
+    ).toEqual({
+      configured: false,
+      openAI: "missing",
+      exa: "missing",
+    });
+    expect(await chromeAdapter.getProviderSettings()).toBeNull();
+    expect((await chromeAdapter.getSession()).captures).toHaveLength(1);
+  });
+
+  it("posts extension analysis directly to OpenAI and never to Vercel", async () => {
+    const chromeAdapter = adapter();
+    await configureOpenAI(chromeAdapter);
     await chromeAdapter.setSession({
       ...createEmptySession(),
       captures: [
@@ -505,101 +730,11 @@ describe("background coordinator", () => {
         },
       ],
     });
-    let connectorCalls = 0;
     const fetchMock = vi.fn(
       async (input: string, init?: RequestInit) => {
+        void input;
         void init;
-        if (input.endsWith("/api/connector/session")) {
-          connectorCalls += 1;
-          return connectorCalls === 1
-            ? new Response(
-                JSON.stringify({
-                  challengeToken:
-                    "challenge-token-with-more-than-forty-characters-123",
-                  difficulty: 8,
-                  expiresAt: Date.now() + 60_000,
-                }),
-                { status: 428 },
-              )
-            : new Response(
-                JSON.stringify({
-                  token: "signed-connector-token",
-                  expiresAt: Date.now() + 15 * 60_000,
-                }),
-                { status: 200 },
-              );
-        }
-        if (input.endsWith("/api/analyze")) {
-          return new Response(
-            JSON.stringify({
-              strategies: [
-              {
-                id: "safe",
-                label: "Safe & precise",
-                eyebrow: "Facts",
-                rationale: "Use verified facts.",
-                confidence: 0.9,
-                accent: "sage",
-                fields: {},
-                sources: [],
-              },
-              {
-                id: "balanced",
-                label: "Balanced",
-                eyebrow: "Best fit",
-                rationale: "Balance confidence and care.",
-                confidence: 0.86,
-                accent: "violet",
-                fields: {},
-                sources: [],
-              },
-              {
-                id: "standout",
-                label: "Standout",
-                eyebrow: "Voice",
-                rationale: "Use a memorable tone.",
-                confidence: 0.8,
-                accent: "coral",
-                fields: {},
-                sources: [],
-              },
-              ],
-            }),
-            { status: 200 },
-          );
-        }
-        return new Response('{"choices":[]}', { status: 200 });
-      },
-    );
-    vi.mocked(chromeAdapter.sendTabMessage).mockImplementation(
-      async (_tabId, message) => {
-        if (message.type === "DISCOVER_FIELDS") {
-          return {
-            documentId: "document-original",
-            fields: [
-              {
-                key: "name",
-                label: "Full name",
-                type: "text",
-                required: true,
-              },
-            ],
-          };
-        }
-        if (message.type === "RUN_PAGE_AGENT") {
-          await coordinator.handle({
-            type: "FETCH_PAGE_AGENT",
-            body: '{"messages":[]}',
-            executionId: message.executionId,
-          });
-          return {
-            status: "filled",
-            adapter: "page-agent",
-            values: {},
-            changedFields: 0,
-          };
-        }
-        return { ok: true };
+        return providerAnalysisResponse();
       },
     );
     const coordinator = createBackgroundCoordinator({
@@ -607,36 +742,25 @@ describe("background coordinator", () => {
       delay: vi.fn().mockResolvedValue(undefined),
       fetch: fetchMock,
       normalizeImage: vi.fn(async (dataUrl) => dataUrl),
-      solveChallenge: vi.fn().mockResolvedValue("42"),
     });
 
     await coordinator.handle({ type: "ANALYZE" });
-    await coordinator.handle({ type: "SET_MODE", mode: "fill" });
-    await coordinator.handle({ type: "EXECUTE" });
 
+    expect(fetchMock).toHaveBeenCalledOnce();
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
-      "https://mochi-overlay.vercel.app/api/connector/session",
+      "https://api.openai.com/v1/responses",
     );
-    expect(fetchMock.mock.calls[1]?.[0]).toBe(
-      "https://mochi-overlay.vercel.app/api/connector/session",
-    );
-    expect(fetchMock.mock.calls[2]?.[0]).toBe(
-      "https://mochi-overlay.vercel.app/api/analyze",
-    );
-    expect(fetchMock.mock.calls[3]?.[0]).toBe(
-      "https://mochi-overlay.vercel.app/api/page-agent/chat/completions",
-    );
-    expect(fetchMock.mock.calls[3]?.[1]).toMatchObject({
-      headers: {
-        authorization: "Bearer signed-connector-token",
-        "content-type": "application/json",
-        "x-mochi-extension-id": "fljecmlbnknpeehjcffenmjjnenmkjea",
-      },
-    });
+    expect(
+      fetchMock.mock.calls.some(([url]) =>
+        String(url).includes("mochi-overlay.vercel.app"),
+      ),
+    ).toBe(false);
+    expect((await chromeAdapter.getSession()).strategies).toHaveLength(3);
   });
 
   it("rejects a duplicate analysis without cancelling the in-flight result", async () => {
     const chromeAdapter = adapter();
+    await configureOpenAI(chromeAdapter);
     await chromeAdapter.setSession({
       ...createEmptySession(),
       captures: [
@@ -651,16 +775,7 @@ describe("background coordinator", () => {
       ],
     });
     let releaseAnalysis: ((response: Response) => void) | undefined;
-    const fetchMock = vi.fn(async (input: string) => {
-      if (input.endsWith("/api/connector/session")) {
-        return new Response(
-          JSON.stringify({
-            token: "signed-connector-token",
-            expiresAt: Date.now() + 60_000,
-          }),
-          { status: 200 },
-        );
-      }
+    const fetchMock = vi.fn(async () => {
       return new Promise<Response>((resolve) => {
         releaseAnalysis = resolve;
       });
@@ -681,12 +796,7 @@ describe("background coordinator", () => {
     ).rejects.toThrow("already analyzing");
     expect((await chromeAdapter.getSession()).status).toBe("analyzing");
 
-    releaseAnalysis?.(
-      new Response(
-        JSON.stringify({ strategies: analyzedSession().strategies }),
-        { status: 200 },
-      ),
-    );
+    releaseAnalysis?.(providerAnalysisResponse());
     await first;
     expect((await chromeAdapter.getSession()).status).toBe("ready");
     expect((await chromeAdapter.getSession()).strategies).toHaveLength(3);
