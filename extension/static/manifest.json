@@ -12,6 +12,7 @@
     "storage"
   ],
   "host_permissions": [
+    "<all_urls>",
     "http://*/*",
     "https://*/*",
     "https://api.openai.com/*",
