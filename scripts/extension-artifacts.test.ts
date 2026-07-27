@@ -62,6 +62,12 @@ describe("Chrome connector artifacts", () => {
         path.join(root, "public/downloads/mochi-connector.zip"),
       ),
     );
+    const archiveDates = Object.values(archive.files)
+      .filter((file) => !file.dir)
+      .map((file) => file.date.toISOString());
+    expect(new Set(archiveDates)).toEqual(
+      new Set(["2000-01-01T00:00:00.000Z"]),
+    );
     const bundledText = (
       await Promise.all(
         Object.values(archive.files)

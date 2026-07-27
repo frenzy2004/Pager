@@ -196,3 +196,9 @@ This file records verified checkpoints, failures, and corrective decisions.
   empty. The in-app browser's enterprise network policy blocked an additional
   manual visit to that domain, so the release relies on the green real-Chromium
   gate rather than bypassing that policy.
+- **Reproducible archive correction:** an authenticated production download
+  contained the same seven files byte-for-byte as the local ZIP, but the ZIP
+  hash differed because JSZip used the packaging time for every entry. A red
+  artifact test captured the timestamp drift; the packager now sorts paths and
+  fixes entry dates. Two independent local package runs now produce SHA-256
+  `245485fedd88764ed1618aaa134a721a2c6351a9077451d111b853bfcd5c3f5b`.
