@@ -836,7 +836,13 @@ describe("background coordinator", () => {
         });
       },
     );
-    let coordinator: ReturnType<typeof createBackgroundCoordinator>;
+    const coordinator = createBackgroundCoordinator({
+      chrome: chromeAdapter,
+      delay: vi.fn().mockResolvedValue(undefined),
+      fetch: fetchMock,
+      normalizeImage: vi.fn(async (dataUrl) => dataUrl),
+      pageAgentSystemPromptSha256: testPageAgentSystemPromptSha256,
+    });
     vi.mocked(chromeAdapter.sendTabMessage).mockImplementation(
       async (_tabId, message) => {
         if (message.type === "DISCOVER_FIELDS") {
@@ -858,13 +864,6 @@ describe("background coordinator", () => {
         return { ok: true };
       },
     );
-    coordinator = createBackgroundCoordinator({
-      chrome: chromeAdapter,
-      delay: vi.fn().mockResolvedValue(undefined),
-      fetch: fetchMock,
-      normalizeImage: vi.fn(async (dataUrl) => dataUrl),
-      pageAgentSystemPromptSha256: testPageAgentSystemPromptSha256,
-    });
 
     await coordinator.handle({ type: "EXECUTE" });
 

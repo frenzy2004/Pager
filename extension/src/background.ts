@@ -22,7 +22,6 @@ import type {
   ConnectorSession,
   ExecutionSummary,
   PageAgentFetchResponse,
-  Strategy,
 } from "./shared/protocol";
 import {
   createEmptySession,

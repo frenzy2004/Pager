@@ -305,26 +305,28 @@ export function ProductDemo() {
             <em>across tabs.</em>
           </h2>
           <p>
-            Add the tiny Chrome connector once. Mochi then appears on eligible
-            websites, keeps one shared eight-capture tray while you switch
-            tabs, and uses Alibaba Page Agent when you tell it to act.
+            The website alone cannot follow you into other tabs—Chrome blocks
+            that. Install the extension once and Mochi keeps one shared
+            eight-capture tray across eligible websites, then uses Alibaba Page
+            Agent when you tell it to act.
           </p>
           <div className="connector-install__badges" aria-label="Requirements">
             <span>CHROME 116+</span>
             <span>8 CAPTURES</span>
-            <span>NO BROWSER API KEY</span>
+            <span>YOUR OPENAI KEY</span>
           </div>
           <a
             className="connector-download"
             href="/downloads/mochi-connector.zip"
             download
           >
-            Download Chrome connector
+            Download Chrome extension
             <span aria-hidden="true">↓</span>
           </a>
           <small>
-            Captures stay local until you press Analyze. OpenAI and Exa keys
-            remain on Vercel.
+            Captures stay local until you press Analyze. Enter your own OpenAI
+            key inside Mochi; Exa is optional. Requests go directly from the
+            extension to the provider.
           </small>
         </div>
 
@@ -370,15 +372,21 @@ export function ProductDemo() {
             <li data-testid="connector-install-step">
               <b>02</b>
               <span>
-                <strong>Open chrome://extensions</strong>
-                <small>Turn on Developer mode in the top corner.</small>
+                <strong>Choose Load unpacked</strong>
+                <small>
+                  Open chrome://extensions, enable Developer mode, and select
+                  the unzipped folder.
+                </small>
               </span>
             </li>
             <li data-testid="connector-install-step">
               <b>03</b>
               <span>
-                <strong>Choose Load unpacked</strong>
-                <small>Select the unzipped folder, then switch tabs.</small>
+                <strong>Open Mochi + add your key</strong>
+                <small>
+                  Enter OpenAI, optionally Exa, then Save &amp; test. Now switch
+                  tabs and capture.
+                </small>
               </span>
             </li>
           </ol>

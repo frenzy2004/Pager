@@ -67,18 +67,26 @@ describe("ProductDemo", () => {
     ).toBeInTheDocument();
   });
 
-  it("publishes the cross-tab connector download and load-unpacked steps", () => {
+  it("publishes an honest BYOK Chrome-extension install path", () => {
     render(<ProductDemo />);
 
     expect(
       screen.getByRole("heading", { name: /use mochi across tabs/i }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("link", { name: /download chrome connector/i }),
+      screen.getByRole("link", { name: /download chrome extension/i }),
     ).toHaveAttribute("href", "/downloads/mochi-connector.zip");
     expect(
       screen.getByText(/captures stay local until you press analyze/i),
     ).toBeInTheDocument();
+    expect(
+      screen.getByText(/enter your own openai key inside mochi/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/website alone cannot follow you into other tabs/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/exa is optional/i)).toBeInTheDocument();
+    expect(screen.queryByText(/no browser api key/i)).not.toBeInTheDocument();
     expect(
       screen.getAllByTestId("connector-install-step"),
     ).toHaveLength(3);

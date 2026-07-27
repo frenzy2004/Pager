@@ -2,12 +2,13 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
+import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
 
 const root = process.cwd();
 
 describe("Chrome connector artifacts", () => {
-  it("builds a Chrome 116 MV3 connector and downloadable archive", () => {
+  it("builds a direct-provider Chrome 116 MV3 extension without bundled secrets", async () => {
     execFileSync("npm", ["run", "package:extension"], {
       cwd: root,
       stdio: "pipe",
@@ -25,6 +26,10 @@ describe("Chrome connector artifacts", () => {
         "scripting",
         "sidePanel",
         "storage",
+      ]),
+      host_permissions: expect.arrayContaining([
+        "https://api.openai.com/*",
+        "https://api.exa.ai/*",
       ]),
     });
 
@@ -51,5 +56,25 @@ describe("Chrome connector artifacts", () => {
     expect(
       statSync(path.join(root, "extension/dist/agent.js")).size,
     ).toBeLessThan(500_000);
+
+    const archive = await JSZip.loadAsync(
+      readFileSync(
+        path.join(root, "public/downloads/mochi-connector.zip"),
+      ),
+    );
+    const bundledText = (
+      await Promise.all(
+        Object.values(archive.files)
+          .filter((file) => !file.dir)
+          .map((file) => file.async("string")),
+      )
+    ).join("\n");
+
+    expect(bundledText).not.toContain(
+      "mochi-overlay.vercel.app/api/",
+    );
+    expect(bundledText).not.toMatch(
+      /(?:sk-(?:proj-)?[A-Za-z0-9_-]{20,}|exa_[A-Za-z0-9_-]{20,}|OPENAI_API_KEY\s*=|EXA_API_KEY\s*=)/,
+    );
   });
 });

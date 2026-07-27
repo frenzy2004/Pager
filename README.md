@@ -11,11 +11,11 @@ creates three grounded strategies, and acts in one of three modes:
 
 **Live product:** [mochi-overlay.vercel.app](https://mochi-overlay.vercel.app)
 
-The Vercel-hosted build is a full interactive product slice with job
-application, sales lead, and general-form missions. It uses a deterministic DOM
-driver on its embedded form. The downloadable Manifest V3 Chrome connector
-injects the Mochi pet into eligible tabs, keeps one global side panel, captures
-up to eight page/region images, and bundles
+The Vercel-hosted build is an interactive product slice with job application,
+sales lead, and general-form missions. A website cannot follow someone into
+other tabs, so the downloadable Manifest V3 Chrome extension provides the real
+cross-tab product. It injects the Mochi pet into eligible tabs, keeps one global
+side panel, captures up to eight page/region images, and bundles
 [Alibaba Page Agent](https://github.com/alibaba/page-agent) for real page
 execution.
 
@@ -32,9 +32,10 @@ npm run dev
 Open `http://localhost:3000`. The complete UI works without provider keys and
 honestly labels those responses as demo output.
 
-## Enable live screenshot analysis
+## Optional server keys for the hosted demo
 
-Add server-side values to `.env.local`:
+The standalone website demo can use server-side provider values from
+`.env.local`:
 
 ```bash
 OPENAI_API_KEY=...
@@ -49,10 +50,11 @@ Outputs. It makes one bounded Exa `fast` search only when the first analysis
 identifies a material public-information gap, then asks OpenAI to refine the
 same three strategies with those sources.
 
-Keys are never prefixed with `NEXT_PUBLIC_`, never reach the browser, and are
-ignored by Git.
+Those variables belong only to the website demo, are never prefixed with
+`NEXT_PUBLIC_`, and are ignored by Git. The Chrome extension does not use these
+Vercel routes or credentials.
 
-## Build and install the Chrome connector
+## Build and install the BYOK Chrome extension
 
 ```bash
 npm run package:extension
@@ -65,10 +67,18 @@ This creates `extension/dist` for **Load unpacked** and
 1. unzip the archive;
 2. open `chrome://extensions` and enable Developer mode;
 3. choose **Load unpacked** and select the unzipped folder.
+4. open Mochi, enter your own OpenAI API key, optionally enter an Exa key, and
+   choose **Save & test**.
 
-The pet appears on normal HTTP/HTTPS tabs. Capture page stores the visible
-viewport; Snip area freezes that same frame and crops the dragged region.
-Captures live in `chrome.storage.session` and do not leave Chrome until Analyze.
+Provider keys are stored in `chrome.storage.local`, restricted to trusted
+extension contexts. They are never returned to the side panel after saving,
+injected into a website, sent to Mochi/Vercel, or included in the downloadable
+bundle. Use a revocable project key with a spending limit.
+
+The pet appears on normal HTTP/HTTPS tabs. **Capture page** stores the visible
+viewport; **Snip area** freezes that same frame and crops the dragged region.
+Captures live in `chrome.storage.session` and do not leave Chrome until
+**Analyze**. The same tray remains available while switching tabs.
 
 ## Page Agent bridge
 
@@ -78,14 +88,13 @@ steps, disables `ask_user` and generated script execution, honors review/fill/
 autopilot submit boundaries, and can be cancelled or undone.
 
 Its custom fetch sends the OpenAI-compatible request to the extension service
-worker, which first obtains a short-lived signed connector session and then
-forwards it only to
-`/api/page-agent/chat/completions` on the fixed Mochi Vercel origin. The route
-accepts only Alibaba Page Agent's single `AgentOutput` macro-tool contract,
-ignores browser model/auth settings, applies the server model and key, and
-forces tool-compatible GPT-5.6 reasoning settings. Per-session quotas and a
-Vercel WAF IP rate limit bound usage. No provider credential is stored in the
-extension.
+worker. The worker applies a strict browser-safe policy, pins the model and
+Alibaba Page Agent's single `AgentOutput` macro-tool contract, and calls OpenAI
+directly with the user's locally stored key. The analysis flow also calls
+OpenAI directly; when the model identifies a material public-information gap
+and an Exa key is configured, it performs one bounded Exa search before OpenAI
+refines the same three strategies. No extension provider traffic passes
+through Mochi/Vercel.
 
 ## Verification
 
