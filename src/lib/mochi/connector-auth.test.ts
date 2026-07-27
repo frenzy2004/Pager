@@ -7,7 +7,7 @@ import {
   verifyConnectorChallenge,
   verifyConnectorToken,
 } from "@/lib/mochi/connector-auth";
-import { solveProofOfWork } from "../../../extension/src/shared/proof-of-work";
+import { solveProofOfWork } from "@/lib/mochi/proof-of-work";
 
 describe("connector authorization", () => {
   const secret = "a-production-length-secret-with-more-than-32-characters";

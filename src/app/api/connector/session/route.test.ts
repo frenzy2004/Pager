@@ -6,7 +6,7 @@ import {
   MOCHI_WEB_CLIENT_ID,
 } from "@/app/api/connector/session/route";
 import { verifyConnectorToken } from "@/lib/mochi/connector-auth";
-import { solveProofOfWork } from "../../../../../extension/src/shared/proof-of-work";
+import { solveProofOfWork } from "@/lib/mochi/proof-of-work";
 
 const originalSecret = process.env.MOCHI_CONNECTOR_SECRET;
 

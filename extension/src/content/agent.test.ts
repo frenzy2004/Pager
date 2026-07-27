@@ -83,7 +83,7 @@ describe("Alibaba Page Agent connector executor", () => {
     ).toBe("Before");
   });
 
-  it("configures Page Agent with a fixed Vercel custom fetch and sixteen steps", async () => {
+  it("keeps Page Agent credential-free behind a fixed OpenAI custom fetch", async () => {
     let proxiedStatus = 0;
     const execute = vi.fn().mockImplementation(async () => {
       const response = await createAgent.mock.calls[0]![0].customFetch!(
@@ -117,12 +117,13 @@ describe("Alibaba Page Agent connector executor", () => {
     const config = createAgent.mock.calls[0]![0];
     expect(config).toMatchObject({
       apiKey: "",
-      baseURL: "https://mochi-overlay.vercel.app/api/page-agent",
+      baseURL: "https://api.openai.com/v1",
       language: "en-US",
       maxSteps: 16,
       model: "gpt-5.6-sol",
       promptForNextTask: false,
     });
+    expect(JSON.stringify(config)).not.toMatch(/sk-[A-Za-z0-9_-]{8,}/);
     expect(config.customTools).toMatchObject({
       ask_user: null,
       click_element_by_index: null,

@@ -1,5 +1,11 @@
+import { createHash } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { PAGE_AGENT_TOOL_PARAMETERS } from "../../src/lib/mochi/page-agent-contract";
+import {
+  buildPageAgentTask,
+  PAGE_AGENT_SYSTEM_INSTRUCTIONS,
+} from "../../src/lib/mochi/page-agent-task";
 import { createBackgroundCoordinator } from "./background";
 import { createEmptySession } from "./shared/session";
 import type { ChromeAdapter } from "./shared/chrome";
@@ -11,6 +17,11 @@ const sidePanelSender = {
   id: extensionId,
   url: `chrome-extension://${extensionId}/sidepanel.html`,
 };
+const testPageAgentSystemPrompt =
+  "Alibaba Page Agent 1.12.2 background test system prompt";
+const testPageAgentSystemPromptSha256 = createHash("sha256")
+  .update(testPageAgentSystemPrompt)
+  .digest("hex");
 
 function fieldManifest(documentId = "document-original") {
   return {
@@ -38,7 +49,6 @@ function adapter(): ChromeAdapter {
       providerSettings = null;
     }),
     executeAgent: vi.fn(),
-    getInstallId: vi.fn().mockResolvedValue("install-id-stable"),
     getProviderSettings: vi.fn(async () => providerSettings),
     getSession: vi.fn(async () => stored),
     getTab: vi.fn().mockResolvedValue({
@@ -64,7 +74,6 @@ function adapter(): ChromeAdapter {
       }
       return { ok: true };
     }),
-    setInstallId: vi.fn(),
     setProviderSettings: vi.fn(async (settings) => {
       providerSettings = settings;
     }),
@@ -213,6 +222,61 @@ async function configureOpenAI(chromeAdapter: ChromeAdapter) {
     openAIValidation: {
       status: "valid",
       checkedAt: "2026-07-27T04:00:00.000Z",
+    },
+  });
+}
+
+function validPageAgentBody() {
+  const task = buildPageAgentTask(
+    { fields: { name: { value: "Jamie Chen" } } },
+    "fill",
+  );
+  const userPrompt = [
+    "<instructions>",
+    "<system_instructions>",
+    PAGE_AGENT_SYSTEM_INSTRUCTIONS,
+    "</system_instructions>",
+    "</instructions>",
+    "",
+    "<agent_state>",
+    "<user_request>",
+    task,
+    "</user_request>",
+    "<step_info>",
+    "Step 1 of 16 max possible steps",
+    "Current time: 7/27/2026, 12:00:00 PM",
+    "</step_info>",
+    "</agent_state>",
+    "",
+    "<agent_history>",
+    "</agent_history>",
+    "",
+    "<browser_state>",
+    "Current Page: [Application](https://forms.example.test/apply)",
+    "[1]<input name=name />",
+    "</browser_state>",
+    "",
+    "",
+  ].join("\n");
+  return JSON.stringify({
+    model: "client-model",
+    messages: [
+      { role: "system", content: testPageAgentSystemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+    tools: [
+      {
+        type: "function",
+        function: {
+          name: "AgentOutput",
+          description: "You MUST call this tool every step!",
+          parameters: PAGE_AGENT_TOOL_PARAMETERS,
+        },
+      },
+    ],
+    tool_choice: {
+      type: "function",
+      function: { name: "AgentOutput" },
     },
   });
 }
@@ -756,6 +820,69 @@ describe("background coordinator", () => {
       ),
     ).toBe(false);
     expect((await chromeAdapter.getSession()).strategies).toHaveLength(3);
+  });
+
+  it("sends validated Page Agent steps directly to OpenAI", async () => {
+    const chromeAdapter = adapter();
+    await configureOpenAI(chromeAdapter);
+    await chromeAdapter.setSession(analyzedSession("fill"));
+    const fetchMock = vi.fn(
+      async (input: string, init?: RequestInit) => {
+        void input;
+        void init;
+        return new Response('{"choices":[]}', {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    );
+    let coordinator: ReturnType<typeof createBackgroundCoordinator>;
+    vi.mocked(chromeAdapter.sendTabMessage).mockImplementation(
+      async (_tabId, message) => {
+        if (message.type === "DISCOVER_FIELDS") {
+          return fieldManifest();
+        }
+        if (message.type === "RUN_PAGE_AGENT") {
+          await coordinator.handle({
+            type: "FETCH_PAGE_AGENT",
+            body: validPageAgentBody(),
+            executionId: message.executionId,
+          });
+          return {
+            status: "filled",
+            adapter: "page-agent",
+            values: { name: "Jamie Chen" },
+            changedFields: 1,
+          };
+        }
+        return { ok: true };
+      },
+    );
+    coordinator = createBackgroundCoordinator({
+      chrome: chromeAdapter,
+      delay: vi.fn().mockResolvedValue(undefined),
+      fetch: fetchMock,
+      normalizeImage: vi.fn(async (dataUrl) => dataUrl),
+      pageAgentSystemPromptSha256: testPageAgentSystemPromptSha256,
+    });
+
+    await coordinator.handle({ type: "EXECUTE" });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "https://api.openai.com/v1/chat/completions",
+    );
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+      headers: {
+        authorization: "Bearer sk-openai-secret",
+        "content-type": "application/json",
+      },
+    });
+    expect(
+      fetchMock.mock.calls.some(([url]) =>
+        String(url).includes("mochi-overlay.vercel.app"),
+      ),
+    ).toBe(false);
   });
 
   it("rejects a duplicate analysis without cancelling the in-flight result", async () => {

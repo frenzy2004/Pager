@@ -2,12 +2,16 @@ import { z } from "zod";
 
 import type {
   CaptureItem,
+  PageAgentFetchResponse,
   Preset,
 } from "../shared/protocol";
+import type { SafePageAgentRequest } from "./page-agent-policy";
 
 export const OPENAI_MODEL = "gpt-5.6-sol";
 export const OPENAI_RESPONSES_URL =
   "https://api.openai.com/v1/responses";
+export const OPENAI_CHAT_COMPLETIONS_URL =
+  "https://api.openai.com/v1/chat/completions";
 export const OPENAI_MODEL_URL =
   `https://api.openai.com/v1/models/${OPENAI_MODEL}`;
 
@@ -302,4 +306,35 @@ export async function askOpenAI(
   } catch {
     throw new Error("OpenAI returned an invalid Mochi response.");
   }
+}
+
+export async function completePageAgent(
+  apiKey: string,
+  body: SafePageAgentRequest,
+  fetcher: ProviderFetch,
+  signal: AbortSignal,
+): Promise<PageAgentFetchResponse> {
+  const response = await openAIFetch(
+    OPENAI_CHAT_COMPLETIONS_URL,
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(body),
+      signal,
+    },
+    fetcher,
+  );
+  if (!response.ok) throw openAIError(response.status);
+  return {
+    status: response.status,
+    statusText: response.statusText,
+    headers: {
+      "content-type":
+        response.headers.get("content-type") ?? "application/json",
+    },
+    bodyText: await response.text(),
+  };
 }

@@ -1,12 +1,15 @@
 import { createChromeAdapter, type ActiveTab, type ChromeAdapter } from "./shared/chrome";
 import { normalizeCapturedImage } from "./shared/image-policy";
-import { solveProofOfWork } from "./shared/proof-of-work";
 import {
   runProviderAnalysis,
   type ProviderAnalysisInput,
 } from "./providers/analysis";
 import { testExaKey } from "./providers/exa";
-import { testOpenAIKey } from "./providers/openai";
+import {
+  completePageAgent,
+  testOpenAIKey,
+} from "./providers/openai";
+import { sanitizePageAgentRequest } from "./providers/page-agent-policy";
 import {
   createUntestedProviderSettings,
   markProviderValidation,
@@ -28,9 +31,6 @@ import {
   reduceSession,
 } from "./shared/session";
 
-export const MOCHI_ORIGIN = "https://mochi-overlay.vercel.app";
-export const CONNECTOR_SESSION_URL = `${MOCHI_ORIGIN}/api/connector/session`;
-export const PAGE_AGENT_URL = `${MOCHI_ORIGIN}/api/page-agent/chat/completions`;
 export const MOCHI_EXTENSION_ID = "fljecmlbnknpeehjcffenmjjnenmkjea";
 const CAPTURE_INTERVAL_MS = 550;
 const EXECUTION_CONTEXT_MUTATIONS = new Set<ConnectorMessage["type"]>([
@@ -51,11 +51,8 @@ interface CoordinatorDependencies {
   delay(milliseconds: number): Promise<void>;
   fetch(input: string, init?: RequestInit): Promise<Response>;
   normalizeImage(dataUrl: string): Promise<string>;
-  solveChallenge?: (
-    challengeToken: string,
-    difficulty: number,
-  ) => Promise<string>;
   extensionId?: string;
+  pageAgentSystemPromptSha256?: string;
   now?: () => Date;
   randomId?: () => string;
 }
@@ -155,10 +152,10 @@ function captureSourceMetadata(tab: ActiveTab) {
 export function createBackgroundCoordinator({
   chrome: chromeAdapter,
   delay,
-  fetch: fetchFromVercel,
+  fetch: fetchProvider,
   normalizeImage,
-  solveChallenge = solveProofOfWork,
   extensionId = MOCHI_EXTENSION_ID,
+  pageAgentSystemPromptSha256,
   now = () => new Date(),
   randomId = () => crypto.randomUUID(),
 }: CoordinatorDependencies) {
@@ -166,8 +163,6 @@ export function createBackgroundCoordinator({
   let cancelConfirmed = false;
   let executionTarget: ActiveTab | null = null;
   let activeExecutionId: string | null = null;
-  let installId: string | null = null;
-  let connectorToken: { value: string; expiresAt: number } | null = null;
   let captureRateQueue: Promise<void> = Promise.resolve();
   let captureOperationQueue: Promise<void> = Promise.resolve();
   let sessionWriteQueue: Promise<void> = Promise.resolve();
@@ -237,7 +232,7 @@ export function createBackgroundCoordinator({
       await withProviderOperation(revision, (signal) =>
         testOpenAIKey(
           settings.openAIApiKey,
-          fetchFromVercel,
+          fetchProvider,
           signal,
         ),
       );
@@ -264,7 +259,7 @@ export function createBackgroundCoordinator({
         await withProviderOperation(revision, (signal) =>
           testExaKey(
             settings.exaApiKey!,
-            fetchFromVercel,
+            fetchProvider,
             signal,
           ),
         );
@@ -331,22 +326,6 @@ export function createBackgroundCoordinator({
       await chromeAdapter.broadcast({ type: "SESSION_UPDATED", session });
       return session;
     });
-  }
-
-  async function getInstallId() {
-    if (installId) return installId;
-    const stored = await chromeAdapter.getInstallId();
-    if (stored && /^[A-Za-z0-9_-]{8,120}$/.test(stored)) {
-      installId = stored;
-      return stored;
-    }
-    const generated = randomId();
-    if (!/^[A-Za-z0-9_-]{8,120}$/.test(generated)) {
-      throw new Error("Mochi could not create a stable connector identity.");
-    }
-    await chromeAdapter.setInstallId(generated);
-    installId = generated;
-    return generated;
   }
 
   async function activeTab() {
@@ -699,7 +678,7 @@ export function createBackgroundCoordinator({
           fields: manifest.fields,
         },
         settings,
-        fetchFromVercel,
+        fetchProvider,
         signal,
       ),
     );
@@ -729,80 +708,6 @@ export function createBackgroundCoordinator({
         },
       }),
     );
-  }
-
-  async function getConnectorToken(forceRefresh = false) {
-    if (
-      !forceRefresh &&
-      connectorToken &&
-      connectorToken.expiresAt > now().getTime() + 30_000
-    ) {
-      return connectorToken.value;
-    }
-    const sessionHeaders = {
-      "content-type": "application/json",
-      "x-mochi-extension-id": extensionId,
-      "x-mochi-extension-version": "0.1.0",
-    };
-    const stableInstallId = await getInstallId();
-    let response = await fetchFromVercel(CONNECTOR_SESSION_URL, {
-      method: "POST",
-      headers: sessionHeaders,
-      body: JSON.stringify({ installId: stableInstallId }),
-    });
-    let payload = (await response.json()) as {
-      challengeToken?: string;
-      difficulty?: number;
-      error?: string;
-      token?: string;
-      expiresAt?: number;
-    };
-    if (
-      response.status === 428 &&
-      typeof payload.challengeToken === "string" &&
-      typeof payload.difficulty === "number"
-    ) {
-      const solution = await solveChallenge(
-        payload.challengeToken,
-        payload.difficulty,
-      );
-      response = await fetchFromVercel(CONNECTOR_SESSION_URL, {
-        method: "POST",
-        headers: sessionHeaders,
-        body: JSON.stringify({
-          installId: stableInstallId,
-          challengeToken: payload.challengeToken,
-          solution,
-        }),
-      });
-      payload = (await response.json()) as typeof payload;
-    }
-    if (
-      !response.ok ||
-      typeof payload.token !== "string" ||
-      typeof payload.expiresAt !== "number"
-    ) {
-      throw new Error(
-        payload.error ?? "Mochi could not authorize Page Agent.",
-      );
-    }
-    connectorToken = {
-      value: payload.token,
-      expiresAt: payload.expiresAt,
-    };
-    return payload.token;
-  }
-
-  async function requestPageAgent(body: string, token: string) {
-    return fetchFromVercel(PAGE_AGENT_URL, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${token}`,
-        "content-type": "application/json",
-        "x-mochi-extension-id": extensionId,
-      },
-      body,
-    });
   }
 
   async function assertLiveExecution(executionId: string) {
@@ -837,16 +742,46 @@ export function createBackgroundCoordinator({
     executionId: string,
   ): Promise<PageAgentFetchResponse> {
     await assertLiveExecution(executionId);
-    let response = await requestPageAgent(
-      body,
-      await getConnectorToken(),
-    );
-    if (response.status === 401) {
-      connectorToken = null;
-      response = await requestPageAgent(
-        body,
-        await getConnectorToken(true),
+    const settings = await chromeAdapter.getProviderSettings();
+    if (!settings || settings.openAIValidation.status !== "valid") {
+      throw new Error(
+        "Add and test your OpenAI key in Settings before using Page Agent.",
       );
+    }
+    const safeBody = await sanitizePageAgentRequest(
+      body,
+      pageAgentSystemPromptSha256
+        ? { systemPromptSha256: pageAgentSystemPromptSha256 }
+        : undefined,
+    );
+    const revision = credentialRevision;
+    let response: PageAgentFetchResponse;
+    try {
+      response = await withProviderOperation(revision, (signal) =>
+        completePageAgent(
+          settings.openAIApiKey,
+          safeBody,
+          fetchProvider,
+          signal,
+        ),
+      );
+    } catch (error) {
+      if (
+        revision === credentialRevision &&
+        error instanceof Error &&
+        (error.message.startsWith("OpenAI rejected") ||
+          error.message.startsWith("This key cannot use"))
+      ) {
+        await chromeAdapter.setProviderSettings(
+          markProviderValidation(
+            settings,
+            "openAI",
+            "invalid",
+            now().toISOString(),
+          ),
+        );
+      }
+      throw error;
     }
     try {
       await assertLiveExecution(executionId);
@@ -858,12 +793,7 @@ export function createBackgroundCoordinator({
       }
       throw error;
     }
-    return {
-      status: response.status,
-      statusText: response.statusText,
-      headers: Object.fromEntries(response.headers.entries()),
-      bodyText: await response.text(),
-    };
+    return response;
   }
 
   async function authorizeSubmit(

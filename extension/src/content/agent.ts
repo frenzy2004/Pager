@@ -29,7 +29,7 @@ import {
 } from "./fields";
 
 const PAGE_AGENT_BASE_URL =
-  "https://mochi-overlay.vercel.app/api/page-agent";
+  "https://api.openai.com/v1";
 
 export interface AgentRuntime {
   sendMessage(

@@ -5,7 +5,6 @@ import {
 } from "./provider-settings";
 
 const SESSION_KEY = "mochi-session";
-const INSTALL_ID_KEY = "mochi-install-id";
 const PROVIDER_SETTINGS_KEY = "mochi-provider-settings";
 
 export interface ActiveTab {
@@ -20,7 +19,6 @@ export interface ChromeAdapter {
   captureVisibleTab(windowId: number): Promise<string>;
   clearProviderSettings(): Promise<void>;
   executeAgent(tabId: number): Promise<void>;
-  getInstallId(): Promise<string | null>;
   getProviderSettings(): Promise<ProviderSettings | null>;
   getSession(): Promise<ConnectorSession>;
   getTab(tabId: number): Promise<ActiveTab | null>;
@@ -28,7 +26,6 @@ export interface ChromeAdapter {
   queryActiveTab(): Promise<ActiveTab | null>;
   restrictLocalStorage(): Promise<void>;
   sendTabMessage(tabId: number, message: ConnectorMessage): Promise<unknown>;
-  setInstallId(installId: string): Promise<void>;
   setProviderSettings(settings: ProviderSettings): Promise<void>;
   setSession(session: ConnectorSession): Promise<void>;
   setSubmissionGuard(tabId: number, enabled: boolean): Promise<void>;
@@ -57,11 +54,6 @@ export function createChromeAdapter(): ChromeAdapter {
         target: { tabId },
         files: ["agent.js"],
       });
-    },
-    async getInstallId() {
-      const stored = await chrome.storage.local.get(INSTALL_ID_KEY);
-      const value = stored[INSTALL_ID_KEY];
-      return typeof value === "string" ? value : null;
     },
     async getProviderSettings() {
       const stored = await chrome.storage.local.get(PROVIDER_SETTINGS_KEY);
@@ -120,9 +112,6 @@ export function createChromeAdapter(): ChromeAdapter {
     },
     sendTabMessage(tabId, message) {
       return chrome.tabs.sendMessage(tabId, message);
-    },
-    async setInstallId(installId) {
-      await chrome.storage.local.set({ [INSTALL_ID_KEY]: installId });
     },
     async setProviderSettings(settings) {
       await chrome.storage.local.set({

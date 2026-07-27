@@ -2,11 +2,14 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   askOpenAI,
+  completePageAgent,
   OPENAI_MODEL,
+  OPENAI_CHAT_COMPLETIONS_URL,
   OPENAI_MODEL_URL,
   OPENAI_RESPONSES_URL,
   testOpenAIKey,
 } from "./openai";
+import type { SafePageAgentRequest } from "./page-agent-policy";
 import type { ProviderAnalysisInput } from "./analysis";
 
 const signal = new AbortController().signal;
@@ -196,5 +199,59 @@ describe("OpenAI provider", () => {
     await expect(
       askOpenAI("sk-openai-secret", input, [], fetcher, signal),
     ).rejects.toThrow("OpenAI returned an invalid Mochi response.");
+  });
+
+  it("sends a sanitized Page Agent request only to OpenAI", async () => {
+    const safeBody = {
+      messages: [
+        { role: "system" as const, content: "fixed system" },
+        { role: "user" as const, content: "fixed user" },
+      ],
+      tools: [],
+      tool_choice: {
+        type: "function" as const,
+        function: { name: "AgentOutput" as const },
+      },
+      parallel_tool_calls: false as const,
+      max_completion_tokens: 1_200,
+      model: OPENAI_MODEL,
+      reasoning_effort: "none" as const,
+      stream: false as const,
+      verbosity: "low" as const,
+    } satisfies SafePageAgentRequest;
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response('{"choices":[]}', {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+          "x-provider-secret": "drop-me",
+        },
+      }),
+    );
+
+    const result = await completePageAgent(
+      "sk-openai-secret",
+      safeBody,
+      fetcher,
+      signal,
+    );
+
+    const [url, init] = fetcher.mock.calls[0]!;
+    expect(url).toBe(OPENAI_CHAT_COMPLETIONS_URL);
+    expect(init).toMatchObject({
+      method: "POST",
+      headers: {
+        authorization: "Bearer sk-openai-secret",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(safeBody),
+      signal,
+    });
+    expect(result).toEqual({
+      status: 200,
+      statusText: "",
+      headers: { "content-type": "application/json" },
+      bodyText: '{"choices":[]}',
+    });
   });
 });
