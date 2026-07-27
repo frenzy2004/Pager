@@ -9,6 +9,7 @@ import {
 import type {
   ConnectorMessage,
   ConnectorSession,
+  ProviderStatus,
 } from "../shared/protocol";
 import { createEmptySession } from "../shared/session";
 
@@ -77,12 +78,24 @@ function readySession(): ConnectorSession {
   };
 }
 
-function runtime(session: ConnectorSession): SidePanelRuntime & {
+const validProviderStatus: ProviderStatus = {
+  configured: true,
+  openAI: "valid",
+  exa: "missing",
+};
+
+function runtime(
+  session: ConnectorSession,
+  status: ProviderStatus = validProviderStatus,
+): SidePanelRuntime & {
   sendMessage: ReturnType<typeof vi.fn>;
 } {
   const sendMessage = vi.fn(async (message: ConnectorMessage) => ({
     ok: true,
-    result: message.type === "GET_SESSION" ? session : session,
+    result:
+      message.type === "GET_PROVIDER_STATUS"
+        ? status
+        : session,
   }));
   return {
     addMessageListener() {
@@ -93,6 +106,119 @@ function runtime(session: ConnectorSession): SidePanelRuntime & {
 }
 
 describe("global Mochi side panel", () => {
+  it("gates first use behind one required OpenAI key and optional Exa key", async () => {
+    const panelRuntime = runtime(createEmptySession(), {
+      configured: false,
+      openAI: "missing",
+      exa: "missing",
+    });
+    render(<App runtime={panelRuntime} />);
+
+    expect(
+      await screen.findByRole("heading", { name: /add your own key/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByLabelText(/openai api key/i),
+    ).toHaveAttribute("type", "password");
+    expect(
+      screen.getByLabelText(/exa api key.*optional/i),
+    ).toHaveAttribute("type", "password");
+    expect(
+      screen.queryByRole("button", { name: /capture page/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("saves keys once and unlocks when OpenAI validates", async () => {
+    const user = userEvent.setup();
+    const panelRuntime = runtime(createEmptySession(), {
+      configured: false,
+      openAI: "missing",
+      exa: "missing",
+    });
+    panelRuntime.sendMessage.mockImplementation(
+      async (message: ConnectorMessage) => ({
+        ok: true,
+        result:
+          message.type === "GET_PROVIDER_STATUS"
+            ? {
+                configured: false,
+                openAI: "missing",
+                exa: "missing",
+              }
+            : message.type === "SAVE_AND_TEST_PROVIDER_SETTINGS"
+              ? {
+                  configured: true,
+                  openAI: "valid",
+                  exa: "missing",
+                }
+              : createEmptySession(),
+      }),
+    );
+    render(<App runtime={panelRuntime} />);
+
+    await user.type(
+      await screen.findByLabelText(/openai api key/i),
+      "sk-openai-test",
+    );
+    await user.click(
+      screen.getByRole("button", { name: /save & test/i }),
+    );
+
+    expect(panelRuntime.sendMessage).toHaveBeenCalledWith({
+      type: "SAVE_AND_TEST_PROVIDER_SETTINGS",
+      openAIApiKey: "sk-openai-test",
+    });
+    expect(
+      await screen.findByRole("button", { name: /capture page/i }),
+    ).toBeVisible();
+  });
+
+  it("clears keys from Settings while preserving the capture session", async () => {
+    const user = userEvent.setup();
+    const session = readySession();
+    const panelRuntime = runtime(session);
+    panelRuntime.sendMessage.mockImplementation(
+      async (message: ConnectorMessage) => ({
+        ok: true,
+        result:
+          message.type === "GET_PROVIDER_STATUS"
+            ? validProviderStatus
+            : message.type === "CLEAR_PROVIDER_SETTINGS"
+              ? {
+                  configured: false,
+                  openAI: "missing",
+                  exa: "missing",
+                }
+              : session,
+      }),
+    );
+    render(<App runtime={panelRuntime} />);
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: /provider settings/i,
+      }),
+    );
+    expect(
+      screen.getByText(
+        (_, element) =>
+          element?.tagName === "P" &&
+          element.textContent === "OpenAI: connected",
+      ),
+    ).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: /clear keys/i }),
+    );
+
+    expect(panelRuntime.sendMessage).toHaveBeenCalledWith({
+      type: "CLEAR_PROVIDER_SETTINGS",
+    });
+    expect(
+      await screen.findByRole("heading", { name: /add your own key/i }),
+    ).toBeInTheDocument();
+    expect(session.captures).toHaveLength(2);
+  });
+
   it("offers repeated viewport and region capture across all three missions", async () => {
     const user = userEvent.setup();
     const panelRuntime = runtime(createEmptySession());
@@ -123,7 +249,9 @@ describe("global Mochi side panel", () => {
       async (message: ConnectorMessage) => ({
         ok: true,
         result:
-          message.type === "SET_MODE"
+          message.type === "GET_PROVIDER_STATUS"
+            ? validProviderStatus
+            : message.type === "SET_MODE"
             ? { ...session, executionMode: message.mode }
             : session,
       }),
@@ -160,7 +288,9 @@ describe("global Mochi side panel", () => {
       async (message: ConnectorMessage) => ({
         ok: true,
         result:
-          message.type === "EXECUTE"
+          message.type === "GET_PROVIDER_STATUS"
+            ? validProviderStatus
+            : message.type === "EXECUTE"
             ? {
                 status: "preview",
                 adapter: "page-agent",

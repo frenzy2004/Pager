@@ -5,6 +5,7 @@ import type {
   ConnectorSession,
   ExecutionMode,
   Preset,
+  ProviderStatus,
   Strategy,
 } from "../shared/protocol";
 import { createEmptySession } from "../shared/session";
@@ -69,6 +70,25 @@ function isSession(value: unknown): value is ConnectorSession {
   );
 }
 
+function isProviderStatus(value: unknown): value is ProviderStatus {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "configured" in value &&
+    typeof value.configured === "boolean" &&
+    "openAI" in value &&
+    (value.openAI === "missing" ||
+      value.openAI === "untested" ||
+      value.openAI === "valid" ||
+      value.openAI === "invalid") &&
+    "exa" in value &&
+    (value.exa === "missing" ||
+      value.exa === "untested" ||
+      value.exa === "valid" ||
+      value.exa === "invalid")
+  );
+}
+
 function unwrapRuntimeResponse(value: unknown) {
   if (
     typeof value === "object" &&
@@ -96,8 +116,187 @@ function isExecutionPreview(value: unknown): value is ExecutionPreview {
   );
 }
 
+interface ProviderSetupProps {
+  onClear(): Promise<void>;
+  onClose?(): void;
+  onRetest(): Promise<void>;
+  onSave(openAIApiKey: string, exaApiKey?: string): Promise<void>;
+  settingsMode: boolean;
+  status: ProviderStatus;
+  working: boolean;
+}
+
+function ProviderSetup({
+  onClear,
+  onClose,
+  onRetest,
+  onSave,
+  settingsMode,
+  status,
+  working,
+}: ProviderSetupProps) {
+  const [replacing, setReplacing] = useState(false);
+  const [openAIApiKey, setOpenAIApiKey] = useState("");
+  const [exaApiKey, setExaApiKey] = useState("");
+  const showForm = !settingsMode || replacing;
+
+  if (!showForm) {
+    return (
+      <section
+        className="provider-setup"
+        aria-labelledby="provider-settings-title"
+      >
+        <span className="eyebrow">Provider settings</span>
+        <h1 id="provider-settings-title">Your connection.</h1>
+        <div className="provider-status-list">
+          <p>
+            OpenAI:{" "}
+            <strong>
+              {status.openAI === "valid" ? "connected" : status.openAI}
+            </strong>
+          </p>
+          <p>
+            Exa:{" "}
+            <strong>
+              {status.exa === "valid"
+                ? "connected"
+                : status.exa === "missing"
+                  ? "not configured"
+                  : status.exa}
+            </strong>
+          </p>
+        </div>
+        <div className="provider-settings-actions">
+          <button
+            type="button"
+            disabled={working}
+            onClick={() => void onRetest()}
+          >
+            Retest
+          </button>
+          <button
+            type="button"
+            disabled={working}
+            onClick={() => setReplacing(true)}
+          >
+            Replace keys
+          </button>
+          <button
+            type="button"
+            className="danger-button"
+            disabled={working}
+            onClick={() => void onClear()}
+          >
+            Clear keys
+          </button>
+        </div>
+        <button
+          className="text-button"
+          type="button"
+          onClick={onClose}
+        >
+          Back to Mochi
+        </button>
+      </section>
+    );
+  }
+
+  return (
+    <section className="provider-setup" aria-labelledby="provider-setup-title">
+      <span className="eyebrow">
+        {settingsMode ? "Replace provider keys" : "First-time setup"}
+      </span>
+      <h1 id="provider-setup-title">
+        {settingsMode ? "Replace your keys." : "Add your own key."}
+      </h1>
+      <p className="provider-intro">
+        OpenAI is required. Exa is optional public-web research.
+      </p>
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          void onSave(
+            openAIApiKey,
+            exaApiKey.trim() || undefined,
+          ).then(() => {
+            setOpenAIApiKey("");
+            setExaApiKey("");
+            setReplacing(false);
+          });
+        }}
+      >
+        <label>
+          <span>OpenAI API key</span>
+          <input
+            type="password"
+            autoComplete="off"
+            minLength={8}
+            maxLength={512}
+            required
+            value={openAIApiKey}
+            onChange={(event) => setOpenAIApiKey(event.target.value)}
+            placeholder="sk-…"
+          />
+        </label>
+        <label>
+          <span>Exa API key (optional)</span>
+          <input
+            type="password"
+            autoComplete="off"
+            minLength={8}
+            maxLength={512}
+            value={exaApiKey}
+            onChange={(event) => setExaApiKey(event.target.value)}
+            placeholder="Optional"
+          />
+        </label>
+        <button
+          className="provider-save-button"
+          type="submit"
+          disabled={working || openAIApiKey.trim().length < 8}
+        >
+          {working ? "Testing…" : "Save & test"}
+        </button>
+      </form>
+      <p className="provider-warning">
+        Stored only in this Chrome profile and sent directly to the provider.
+        For this personal unpacked extension, use a revocable project key with
+        a spending limit.
+      </p>
+      <div className="provider-links">
+        <a
+          href="https://platform.openai.com/api-keys"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Get an OpenAI key ↗
+        </a>
+        <a
+          href="https://dashboard.exa.ai/api-keys"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Get an Exa key ↗
+        </a>
+      </div>
+      {settingsMode && (
+        <button
+          className="text-button"
+          type="button"
+          onClick={() => setReplacing(false)}
+        >
+          Cancel replacement
+        </button>
+      )}
+    </section>
+  );
+}
+
 export function App({ runtime }: AppProps) {
   const [session, setSession] = useState(createEmptySession);
+  const [providerStatus, setProviderStatus] =
+    useState<ProviderStatus | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [working, setWorking] = useState(false);
   const [localError, setLocalError] = useState("");
   const [preview, setPreview] = useState<ExecutionPreview | null>(null);
@@ -132,13 +331,31 @@ export function App({ runtime }: AppProps) {
         }
       });
 
+    void runtime
+      .sendMessage({ type: "GET_PROVIDER_STATUS" })
+      .then(unwrapRuntimeResponse)
+      .then((value) => {
+        if (active && isProviderStatus(value)) {
+          setProviderStatus(value);
+        }
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setLocalError(
+            error instanceof Error
+              ? error.message
+              : "Mochi could not load provider settings.",
+          );
+        }
+      });
+
     return () => {
       active = false;
       removeListener();
     };
   }, [runtime]);
 
-  const send = async (message: ConnectorMessage) => {
+  const send = async (message: ConnectorMessage): Promise<unknown> => {
     setWorking(true);
     setLocalError("");
     try {
@@ -147,11 +364,15 @@ export function App({ runtime }: AppProps) {
         setSession(value);
       } else if (isExecutionPreview(value)) {
         setPreview(value);
+      } else if (isProviderStatus(value)) {
+        setProviderStatus(value);
       }
+      return value;
     } catch (error) {
       setLocalError(
         error instanceof Error ? error.message : "Mochi could not finish.",
       );
+      return undefined;
     } finally {
       setWorking(false);
     }
@@ -185,12 +406,55 @@ export function App({ runtime }: AppProps) {
           <strong>mochi</strong>
           <small>CONTEXT THAT CAN ACT</small>
         </div>
-        <i
-          className={`status-light status-light--${session.status}`}
-          title={session.status}
-        />
+        <div className="panel-header-actions">
+          {providerStatus?.configured && (
+            <button
+              className="settings-button"
+              type="button"
+              aria-label="Provider settings"
+              onClick={() => setSettingsOpen(true)}
+            >
+              ⚙
+            </button>
+          )}
+          <i
+            className={`status-light status-light--${session.status}`}
+            title={session.status}
+          />
+        </div>
       </header>
 
+      {providerStatus === null ? (
+        <section className="provider-loading" aria-live="polite">
+          <span aria-hidden="true">✦</span>
+          Loading Mochi…
+        </section>
+      ) : !providerStatus.configured || settingsOpen ? (
+        <ProviderSetup
+          status={providerStatus}
+          settingsMode={settingsOpen && providerStatus.configured}
+          working={working}
+          onClose={() => setSettingsOpen(false)}
+          onSave={async (openAIApiKey, exaApiKey) => {
+            const value = await send({
+              type: "SAVE_AND_TEST_PROVIDER_SETTINGS",
+              openAIApiKey,
+              ...(exaApiKey ? { exaApiKey } : {}),
+            });
+            if (isProviderStatus(value) && value.configured) {
+              setSettingsOpen(false);
+            }
+          }}
+          onRetest={async () => {
+            await send({ type: "RETEST_PROVIDER_SETTINGS" });
+          }}
+          onClear={async () => {
+            await send({ type: "CLEAR_PROVIDER_SETTINGS" });
+            setSettingsOpen(false);
+          }}
+        />
+      ) : (
+        <>
       <section className="mission-section" aria-labelledby="mission-title">
         <span className="eyebrow" id="mission-title">
           Mission
@@ -453,6 +717,8 @@ export function App({ runtime }: AppProps) {
             </div>
           )}
         </section>
+      )}
+        </>
       )}
 
       {(localError || session.error) && (
