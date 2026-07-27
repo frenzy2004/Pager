@@ -1,7 +1,12 @@
 import type { ConnectorMessage, ConnectorSession } from "./protocol";
+import {
+  parseProviderSettings,
+  type ProviderSettings,
+} from "./provider-settings";
 
 const SESSION_KEY = "mochi-session";
 const INSTALL_ID_KEY = "mochi-install-id";
+const PROVIDER_SETTINGS_KEY = "mochi-provider-settings";
 
 export interface ActiveTab {
   id: number;
@@ -13,14 +18,18 @@ export interface ActiveTab {
 export interface ChromeAdapter {
   broadcast(message: ConnectorMessage): Promise<void>;
   captureVisibleTab(windowId: number): Promise<string>;
+  clearProviderSettings(): Promise<void>;
   executeAgent(tabId: number): Promise<void>;
   getInstallId(): Promise<string | null>;
+  getProviderSettings(): Promise<ProviderSettings | null>;
   getSession(): Promise<ConnectorSession>;
   getTab(tabId: number): Promise<ActiveTab | null>;
   openPanel(windowId: number): Promise<void>;
   queryActiveTab(): Promise<ActiveTab | null>;
+  restrictLocalStorage(): Promise<void>;
   sendTabMessage(tabId: number, message: ConnectorMessage): Promise<unknown>;
   setInstallId(installId: string): Promise<void>;
+  setProviderSettings(settings: ProviderSettings): Promise<void>;
   setSession(session: ConnectorSession): Promise<void>;
   setSubmissionGuard(tabId: number, enabled: boolean): Promise<void>;
 }
@@ -40,6 +49,9 @@ export function createChromeAdapter(): ChromeAdapter {
         quality: 82,
       });
     },
+    async clearProviderSettings() {
+      await chrome.storage.local.remove(PROVIDER_SETTINGS_KEY);
+    },
     async executeAgent(tabId) {
       await chrome.scripting.executeScript({
         target: { tabId },
@@ -50,6 +62,10 @@ export function createChromeAdapter(): ChromeAdapter {
       const stored = await chrome.storage.local.get(INSTALL_ID_KEY);
       const value = stored[INSTALL_ID_KEY];
       return typeof value === "string" ? value : null;
+    },
+    async getProviderSettings() {
+      const stored = await chrome.storage.local.get(PROVIDER_SETTINGS_KEY);
+      return parseProviderSettings(stored[PROVIDER_SETTINGS_KEY]);
     },
     async getSession() {
       const stored = await chrome.storage.session.get(SESSION_KEY);
@@ -97,11 +113,21 @@ export function createChromeAdapter(): ChromeAdapter {
         title: tab.title ?? new URL(tab.url).hostname,
       };
     },
+    async restrictLocalStorage() {
+      await chrome.storage.local.setAccessLevel({
+        accessLevel: "TRUSTED_CONTEXTS",
+      });
+    },
     sendTabMessage(tabId, message) {
       return chrome.tabs.sendMessage(tabId, message);
     },
     async setInstallId(installId) {
       await chrome.storage.local.set({ [INSTALL_ID_KEY]: installId });
+    },
+    async setProviderSettings(settings) {
+      await chrome.storage.local.set({
+        [PROVIDER_SETTINGS_KEY]: settings,
+      });
     },
     async setSession(session) {
       await chrome.storage.session.set({ [SESSION_KEY]: session });

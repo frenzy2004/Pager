@@ -11,6 +11,7 @@ import type {
   Strategy,
 } from "./protocol";
 import { MAX_SCREENSHOT_DATA_URL_LENGTH } from "../../../src/lib/mochi/image-limits";
+import { isProviderKeyCandidate } from "./provider-settings";
 
 export const MAX_CAPTURES = 8;
 export const MAX_CAPTURE_DATA_URL_LENGTH =
@@ -233,6 +234,9 @@ export function parseConnectorMessage(value: unknown): ConnectorMessage | null {
 
   const noPayload = new Set([
     "GET_SESSION",
+    "GET_PROVIDER_STATUS",
+    "RETEST_PROVIDER_SETTINGS",
+    "CLEAR_PROVIDER_SETTINGS",
     "OPEN_PANEL",
     "CAPTURE_VIEWPORT",
     "START_SNIP",
@@ -250,6 +254,24 @@ export function parseConnectorMessage(value: unknown): ConnectorMessage | null {
 
   if (noPayload.has(value.type) && hasOnlyType(value)) {
     return value as ConnectorMessage;
+  }
+
+  if (
+    value.type === "SAVE_AND_TEST_PROVIDER_SETTINGS" &&
+    isProviderKeyCandidate(value.openAIApiKey) &&
+    (value.exaApiKey === undefined ||
+      isProviderKeyCandidate(value.exaApiKey)) &&
+    Object.keys(value).every((key) =>
+      ["type", "openAIApiKey", "exaApiKey"].includes(key),
+    )
+  ) {
+    return {
+      type: value.type,
+      openAIApiKey: value.openAIApiKey,
+      ...(value.exaApiKey
+        ? { exaApiKey: value.exaApiKey as string }
+        : {}),
+    };
   }
 
   if (

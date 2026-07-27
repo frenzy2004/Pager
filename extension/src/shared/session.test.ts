@@ -169,6 +169,36 @@ describe("connector session", () => {
     expect(parseConnectorMessage(null)).toBeNull();
   });
 
+  it("accepts bounded provider settings messages without adding keys to session", () => {
+    expect(
+      parseConnectorMessage({
+        type: "SAVE_AND_TEST_PROVIDER_SETTINGS",
+        openAIApiKey: "sk-openai-test",
+        exaApiKey: "exa-test-key",
+      }),
+    ).toEqual({
+      type: "SAVE_AND_TEST_PROVIDER_SETTINGS",
+      openAIApiKey: "sk-openai-test",
+      exaApiKey: "exa-test-key",
+    });
+    expect(
+      parseConnectorMessage({
+        type: "SAVE_AND_TEST_PROVIDER_SETTINGS",
+        openAIApiKey: "x".repeat(513),
+      }),
+    ).toBeNull();
+    expect(
+      parseConnectorMessage({ type: "GET_PROVIDER_STATUS" }),
+    ).toEqual({ type: "GET_PROVIDER_STATUS" });
+    expect(
+      parseConnectorMessage({ type: "RETEST_PROVIDER_SETTINGS" }),
+    ).toEqual({ type: "RETEST_PROVIDER_SETTINGS" });
+    expect(
+      parseConnectorMessage({ type: "CLEAR_PROVIDER_SETTINGS" }),
+    ).toEqual({ type: "CLEAR_PROVIDER_SETTINGS" });
+    expect(JSON.stringify(createEmptySession())).not.toContain("ApiKey");
+  });
+
   it("invalidates exact-fill approval whenever its reviewed context changes", () => {
     const offer = {
       tabId: 7,

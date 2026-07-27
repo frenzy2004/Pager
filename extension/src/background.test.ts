@@ -26,8 +26,10 @@ function adapter(): ChromeAdapter {
     captureVisibleTab: vi
       .fn()
       .mockResolvedValue("data:image/jpeg;base64,Y2FwdHVyZQ=="),
+    clearProviderSettings: vi.fn(),
     executeAgent: vi.fn(),
     getInstallId: vi.fn().mockResolvedValue("install-id-stable"),
+    getProviderSettings: vi.fn().mockResolvedValue(null),
     getSession: vi.fn(async () => stored),
     getTab: vi.fn().mockResolvedValue({
       id: 7,
@@ -42,6 +44,7 @@ function adapter(): ChromeAdapter {
       url: "https://forms.example.test/apply",
       title: "Application",
     }),
+    restrictLocalStorage: vi.fn(),
     sendTabMessage: vi.fn(async (_tabId, message) => {
       if (message.type === "DISCOVER_FIELDS") {
         return fieldManifest();
@@ -52,6 +55,7 @@ function adapter(): ChromeAdapter {
       return { ok: true };
     }),
     setInstallId: vi.fn(),
+    setProviderSettings: vi.fn(),
     setSession: vi.fn(async (session) => {
       stored = session;
     }),

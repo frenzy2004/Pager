@@ -103,8 +103,22 @@ export interface ConnectorSession {
   executionCountdown: number | null;
 }
 
+export interface ProviderStatus {
+  configured: boolean;
+  openAI: "missing" | "untested" | "valid" | "invalid";
+  exa: "missing" | "untested" | "valid" | "invalid";
+}
+
 export type ConnectorMessage =
   | { type: "GET_SESSION" }
+  | { type: "GET_PROVIDER_STATUS" }
+  | {
+      type: "SAVE_AND_TEST_PROVIDER_SETTINGS";
+      openAIApiKey: string;
+      exaApiKey?: string;
+    }
+  | { type: "RETEST_PROVIDER_SETTINGS" }
+  | { type: "CLEAR_PROVIDER_SETTINGS" }
   | { type: "OPEN_PANEL" }
   | { type: "CAPTURE_VIEWPORT" }
   | { type: "START_SNIP" }
