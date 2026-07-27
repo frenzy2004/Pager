@@ -15,6 +15,8 @@ import type {
 } from "../../extension/src/shared/protocol";
 
 const extensionPath = path.join(process.cwd(), "extension", "dist");
+const openAIKey = "sk-openai-e2e-local-project-key";
+const exaKey = "exa-e2e-local-project-key";
 
 const strategies = [
   {
@@ -70,6 +72,50 @@ const strategies = [
   },
 ];
 
+function modelAnalysis(researchQuery: string | null, sourced: boolean) {
+  return {
+    pageSummary: "A one-field test form.",
+    gaps: researchQuery ? ["Public profile context"] : [],
+    researchQuery,
+    strategies: strategies.map((strategy) => ({
+      id: strategy.id,
+      label: strategy.label,
+      eyebrow: strategy.eyebrow,
+      rationale: strategy.rationale,
+      confidence: strategy.confidence,
+      accent: strategy.accent,
+      fields: [
+        {
+          key: "name",
+          value: "Jamie Chen",
+          status: sourced ? "researched" : "supported",
+          confidence: 1,
+          sourceIds: sourced ? ["exa-1"] : [],
+        },
+      ],
+    })),
+  };
+}
+
+function responsesPayload(value: unknown) {
+  return {
+    id: "resp_connector",
+    object: "response",
+    output: [
+      {
+        type: "message",
+        role: "assistant",
+        content: [
+          {
+            type: "output_text",
+            text: JSON.stringify(value),
+          },
+        ],
+      },
+    ],
+  };
+}
+
 async function extensionWorker(context: BrowserContext) {
   const existing = context
     .serviceWorkers()
@@ -103,12 +149,15 @@ test("connector follows tabs, captures repeatedly, snips, fills with Page Agent,
   test.skip(testInfo.project.name !== "chromium");
   test.setTimeout(180_000);
 
+  let responseCalls = 0;
+  let exaCalls = 0;
   let pageAgentCalls = 0;
-  let connectorSessionCalls = 0;
+  let vercelProviderCalls = 0;
   let observedInputTool = false;
+  const observedProviderUrls: string[] = [];
   const context = await chromium.launchPersistentContext("", {
     channel: "chromium",
-    headless: false,
+    headless: true,
     args: [
       `--disable-extensions-except=${extensionPath}`,
       `--load-extension=${extensionPath}`,
@@ -118,69 +167,88 @@ test("connector follows tabs, captures repeatedly, snips, fills with Page Agent,
 
   try {
     await context.route(
-      "https://mochi-overlay.vercel.app/api/connector/session",
+      "https://mochi-overlay.vercel.app/api/**",
       async (route) => {
-        connectorSessionCalls += 1;
-        expect(route.request().headers()["x-mochi-extension-id"]).toBe(
-          "fljecmlbnknpeehjcffenmjjnenmkjea",
+        vercelProviderCalls += 1;
+        await route.fulfill({
+          status: 418,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "Extension must not call Vercel." }),
+        });
+      },
+    );
+    await context.route(
+      "https://api.openai.com/v1/models/gpt-5.6-sol",
+      async (route) => {
+        observedProviderUrls.push(route.request().url());
+        expect(route.request().headers().authorization).toBe(
+          `Bearer ${openAIKey}`,
         );
-        const requestBody = route.request().postDataJSON() as {
-          challengeToken?: string;
-          solution?: string;
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ id: "gpt-5.6-sol" }),
+        });
+      },
+    );
+    await context.route(
+      "https://api.exa.ai/search",
+      async (route) => {
+        exaCalls += 1;
+        observedProviderUrls.push(route.request().url());
+        expect(route.request().headers()["x-api-key"]).toBe(exaKey);
+        const body = route.request().postDataJSON() as {
+          query?: string;
+          numResults?: number;
         };
-        if (connectorSessionCalls === 1) {
-          await route.fulfill({
-            status: 428,
-            contentType: "application/json",
-            body: JSON.stringify({
-              challengeToken:
-                "e2e-proof-challenge-token-with-at-least-forty-characters",
-              difficulty: 8,
-              expiresAt: Date.now() + 60_000,
-            }),
-          });
-          return;
-        }
-        expect(requestBody.challengeToken).toBe(
-          "e2e-proof-challenge-token-with-at-least-forty-characters",
-        );
-        expect(requestBody.solution).toMatch(/^\d+$/);
+        expect(body.numResults).toBe(exaCalls === 1 ? 1 : 3);
         await route.fulfill({
           status: 200,
           contentType: "application/json",
           body: JSON.stringify({
-            token: "e2e-signed-connector-token",
-            expiresAt: Date.now() + 15 * 60_000,
+            results: [
+              {
+                title: "Jamie Chen profile",
+                url: "https://profile.example.test/jamie",
+                highlights: ["Jamie Chen is a product designer."],
+              },
+            ],
           }),
         });
       },
     );
     await context.route(
-      "https://mochi-overlay.vercel.app/api/analyze",
+      "https://api.openai.com/v1/responses",
       async (route) => {
+        responseCalls += 1;
+        observedProviderUrls.push(route.request().url());
         expect(route.request().headers().authorization).toBe(
-          "Bearer e2e-signed-connector-token",
+          `Bearer ${openAIKey}`,
         );
+        expect(route.request().postData()).not.toContain(openAIKey);
+        expect(route.request().postData()).not.toContain(exaKey);
         await route.fulfill({
           status: 200,
           contentType: "application/json",
-          body: JSON.stringify({
-            engine: "openai",
-            notice: "Connector browser test",
-            pageSummary: "A one-field test form.",
-            gaps: [],
-            strategies,
-          }),
+          body: JSON.stringify(
+            responsesPayload(
+              modelAnalysis(
+                responseCalls === 1 ? "Jamie Chen product designer" : null,
+                responseCalls > 1,
+              ),
+            ),
+          ),
         });
       },
     );
     await context.route(
-      "https://mochi-overlay.vercel.app/api/page-agent/chat/completions",
+      "https://api.openai.com/v1/chat/completions",
       async (route) => {
-        expect(route.request().headers().authorization).toBe(
-          "Bearer e2e-signed-connector-token",
-        );
         pageAgentCalls += 1;
+        observedProviderUrls.push(route.request().url());
+        expect(route.request().headers().authorization).toBe(
+          `Bearer ${openAIKey}`,
+        );
         const body = route.request().postDataJSON() as {
           messages: Array<{ role?: string; content?: string | null }>;
           tools: Array<{ function?: { name?: string } }>;
@@ -189,6 +257,8 @@ test("connector follows tabs, captures repeatedly, snips, fills with Page Agent,
             function?: { name?: string };
           };
         };
+        expect(JSON.stringify(body)).not.toContain(openAIKey);
+        expect(JSON.stringify(body)).not.toContain(exaKey);
         expect(body.messages.map(({ role }) => role)).toEqual([
           "system",
           "user",
@@ -275,6 +345,34 @@ test("connector follows tabs, captures repeatedly, snips, fills with Page Agent,
     expect(extensionId).toBe("fljecmlbnknpeehjcffenmjjnenmkjea");
     const panel = await context.newPage();
     await panel.goto(`chrome-extension://${extensionId}/sidepanel.html`);
+    await expect(
+      panel.getByRole("heading", { name: "Add your own key." }),
+    ).toBeVisible();
+    await panel.getByLabel("OpenAI API key").fill(openAIKey);
+    await panel.getByLabel("Exa API key (optional)").fill(exaKey);
+    await panel.getByRole("button", { name: "Save & test" }).click();
+    await expect(
+      panel.getByRole("button", { name: "Capture page" }),
+    ).toBeVisible();
+
+    const savedProviderStatus = await worker.evaluate(async () => {
+      const stored = await chrome.storage.local.get(
+        "mochi-provider-settings",
+      );
+      const settings = stored["mochi-provider-settings"] as {
+        openAIValidation?: { status?: string };
+        exaValidation?: { status?: string };
+      };
+      return {
+        openAI: settings?.openAIValidation?.status,
+        exa: settings?.exaValidation?.status,
+      };
+    });
+    expect(savedProviderStatus).toEqual({
+      openAI: "valid",
+      exa: "valid",
+    });
+
     const profilePage = await context.newPage();
     await profilePage.goto(
       "http://localhost:3000/connector-fixtures/context-b.html",
@@ -329,15 +427,38 @@ test("connector follows tabs, captures repeatedly, snips, fills with Page Agent,
 
     await expect(formPage).toHaveURL(/form-a\.html$/);
     await expect(formPage.locator("[name=name]")).toHaveValue("Jamie Chen");
-    expect(connectorSessionCalls).toBe(2);
+    expect(responseCalls).toBe(2);
+    expect(exaCalls).toBe(2);
     expect(pageAgentCalls).toBeGreaterThanOrEqual(2);
     expect(observedInputTool).toBe(true);
+    expect(vercelProviderCalls).toBe(0);
+    expect(observedProviderUrls.length).toBeGreaterThanOrEqual(6);
+    expect(
+      observedProviderUrls.every((url) =>
+        url.startsWith("https://api.openai.com/") ||
+        url.startsWith("https://api.exa.ai/"),
+      ),
+    ).toBe(true);
     await expect(
       panel.getByRole("button", { name: "Undo last fill" }),
     ).toBeVisible();
 
     await send(panel, { type: "UNDO" });
     await expect(formPage.locator("[name=name]")).toHaveValue("");
+
+    await panel.getByRole("button", { name: "Provider settings" }).click();
+    await panel.getByRole("button", { name: "Clear keys" }).click();
+    await expect(
+      panel.getByRole("heading", { name: "Add your own key." }),
+    ).toBeVisible();
+    expect((await readSession(worker)).captures).toHaveLength(3);
+    const clearedSettings = await worker.evaluate(async () => {
+      const stored = await chrome.storage.local.get(
+        "mochi-provider-settings",
+      );
+      return stored["mochi-provider-settings"];
+    });
+    expect(clearedSettings).toBeUndefined();
   } finally {
     await context.close();
   }
