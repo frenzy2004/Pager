@@ -30,9 +30,9 @@ describe("shared Page Agent task", () => {
     );
   });
 
-  it("allows exactly one verified submit in autopilot", () => {
+  it("keeps clicks out of Page Agent even when Mochi will submit in autopilot", () => {
     expect(buildPageAgentTask(strategy, "autopilot")).toContain(
-      "submit exactly once",
+      "Do not click or submit",
     );
   });
 });

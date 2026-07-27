@@ -60,6 +60,7 @@ async function askOpenAI(
 
   const response = await client.responses.parse({
     model: process.env.OPENAI_MODEL || "gpt-5.6-sol",
+    max_output_tokens: 3_000,
     reasoning: { effort: "low" },
     input: [
       {
@@ -95,7 +96,7 @@ async function searchExa(
     body: JSON.stringify({
       query,
       type: "fast",
-      numResults: 5,
+      numResults: 3,
       moderation: true,
       contents: {
         highlights: {
@@ -116,7 +117,7 @@ async function searchExa(
       (result): result is ExaSearchResult & { title: string; url: string } =>
         Boolean(result.title && result.url),
     )
-    .slice(0, 5)
+    .slice(0, 3)
     .map((result, index) => ({
       id: `exa-${index + 1}`,
       title: result.title,
@@ -212,4 +213,3 @@ export async function runLiveAnalysis(
     strategies: normalizeStrategies(final, input, sources),
   };
 }
-

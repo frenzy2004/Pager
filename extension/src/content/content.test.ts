@@ -36,6 +36,7 @@ describe("per-tab Mochi content script", () => {
     const connectorRuntime = runtime();
     const controller = installContentScript({
       document,
+      documentId: "document-test",
       runtime: connectorRuntime,
     });
 
@@ -54,6 +55,7 @@ describe("per-tab Mochi content script", () => {
     const connectorRuntime = runtime();
     const controller = installContentScript({
       document,
+      documentId: "document-test",
       runtime: connectorRuntime,
     });
     const responses: unknown[] = [];
@@ -78,6 +80,7 @@ describe("per-tab Mochi content script", () => {
       (value) => responses.push(value),
     );
     expect(responses.at(-1)).toEqual({
+      documentId: "document-test",
       fields: [
         {
           key: "name",

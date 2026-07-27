@@ -1,12 +1,18 @@
 import { discoverSafeFieldEntries } from "./fields";
 
-type SafeControl = HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
+export type SafeControl =
+  | HTMLInputElement
+  | HTMLTextAreaElement
+  | HTMLSelectElement;
 
 export interface UndoEntry {
   key: string;
   ordinal: number;
   value: string;
   checked?: boolean;
+  expectedValue?: string;
+  expectedChecked?: boolean;
+  element?: SafeControl;
 }
 
 export interface ExactFillResult {
@@ -20,6 +26,7 @@ export function snapshotSafeValues(root: Document): UndoEntry[] {
       key: field.key,
       ordinal,
       value: element.value,
+      element,
       ...(element instanceof HTMLInputElement &&
       (element.type === "checkbox" || element.type === "radio")
         ? { checked: element.checked }
@@ -92,6 +99,7 @@ export function applyExactValues(
             ordinal,
             value: element.value,
             checked: element.checked,
+            element,
           });
           setNativeChecked(element, next);
           dispatchControlEvents(element);
@@ -120,6 +128,7 @@ export function applyExactValues(
           ordinal: 0,
           value: element.value,
           checked: element.checked,
+          element,
         });
         setNativeChecked(element, next);
         dispatchControlEvents(element);
@@ -138,7 +147,7 @@ export function applyExactValues(
         continue;
       }
       if (element.value !== option.value) {
-        changed.push({ key, ordinal: 0, value: element.value });
+        changed.push({ key, ordinal: 0, value: element.value, element });
         setNativeValue(element, option.value);
         dispatchControlEvents(element);
       }
@@ -146,7 +155,7 @@ export function applyExactValues(
     }
 
     if (element.value !== next) {
-      changed.push({ key, ordinal: 0, value: element.value });
+      changed.push({ key, ordinal: 0, value: element.value, element });
       setNativeValue(element, next);
       dispatchControlEvents(element);
     }
@@ -155,15 +164,68 @@ export function applyExactValues(
   return { changed, skipped };
 }
 
-export function undoExactValues(root: Document, changed: UndoEntry[]) {
+export function resolveUndoEntryElement(
+  root: Document,
+  undo: UndoEntry,
+): SafeControl | null {
+  if (
+    undo.element &&
+    undo.element.ownerDocument === root &&
+    undo.element.isConnected
+  ) {
+    return undo.element;
+  }
+  return (
+    discoverSafeFieldEntries(root)
+      .find(({ field }) => field.key === undo.key)
+      ?.elements[undo.ordinal] ?? null
+  );
+}
+
+export function readUndoEntryValue(
+  root: Document,
+  undo: UndoEntry,
+): { value: string; checked?: boolean } | null {
+  const element = resolveUndoEntryElement(root, undo);
+  if (!element) return null;
+  return {
+    value: element.value,
+    ...(element instanceof HTMLInputElement &&
+    (element.type === "checkbox" || element.type === "radio")
+      ? { checked: element.checked }
+      : {}),
+  };
+}
+
+export function undoExactValues(
+  root: Document,
+  changed: UndoEntry[],
+  requireExpectedMatch = false,
+) {
   const entries = new Map(
     discoverSafeFieldEntries(root).map((entry) => [entry.field.key, entry]),
   );
 
   for (const undo of [...changed].reverse()) {
-    const element = entries.get(undo.key)?.elements[undo.ordinal];
+    const element =
+      resolveUndoEntryElement(root, undo) ??
+      entries.get(undo.key)?.elements[undo.ordinal];
     if (!element) {
       continue;
+    }
+    if (requireExpectedMatch) {
+      if (
+        typeof undo.expectedChecked === "boolean" &&
+        element instanceof HTMLInputElement
+      ) {
+        if (element.checked !== undo.expectedChecked) continue;
+      } else if (
+        typeof undo.expectedValue === "string"
+      ) {
+        if (element.value !== undo.expectedValue) continue;
+      } else {
+        continue;
+      }
     }
 
     if (

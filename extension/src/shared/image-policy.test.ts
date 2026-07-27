@@ -19,9 +19,9 @@ describe("capture image policy", () => {
   });
 
   it("steps JPEG quality down for bounded capture storage", () => {
-    expect(selectCaptureQuality(400_000)).toBe(0.82);
-    expect(selectCaptureQuality(700_000)).toBe(0.68);
-    expect(selectCaptureQuality(840_000)).toBe(0.54);
-    expect(selectCaptureQuality(900_000)).toBe(0.42);
+    expect(selectCaptureQuality(200_000)).toBe(0.82);
+    expect(selectCaptureQuality(300_000)).toBe(0.68);
+    expect(selectCaptureQuality(390_000)).toBe(0.54);
+    expect(selectCaptureQuality(500_000)).toBe(0.42);
   });
 });

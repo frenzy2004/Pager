@@ -41,6 +41,7 @@ OPENAI_API_KEY=...
 OPENAI_MODEL=gpt-5.6-sol
 PAGE_AGENT_MODEL=gpt-5.6-sol
 EXA_API_KEY=...
+MOCHI_CONNECTOR_SECRET=... # at least 32 random characters
 ```
 
 `POST /api/analyze` uses OpenAI Responses API vision with Zod Structured
@@ -77,11 +78,14 @@ steps, disables `ask_user` and generated script execution, honors review/fill/
 autopilot submit boundaries, and can be cancelled or undone.
 
 Its custom fetch sends the OpenAI-compatible request to the extension service
-worker, which forwards it only to
+worker, which first obtains a short-lived signed connector session and then
+forwards it only to
 `/api/page-agent/chat/completions` on the fixed Mochi Vercel origin. The route
+accepts only Alibaba Page Agent's single `AgentOutput` macro-tool contract,
 ignores browser model/auth settings, applies the server model and key, and
-forces tool-compatible GPT-5.6 reasoning settings. No provider credential is
-stored in the extension.
+forces tool-compatible GPT-5.6 reasoning settings. Per-session quotas and a
+Vercel WAF IP rate limit bound usage. No provider credential is stored in the
+extension.
 
 ## Verification
 
@@ -103,5 +107,9 @@ status claims.
 - Unknown identity/contact facts stay blank instead of being invented.
 - Public web research is cited and visually distinguished from draft wording.
 - Review is the default action mode.
+- Page Agent cannot click buttons; fill mode never submits, while Autopilot
+  validates the exact field map before Mochi invokes one form submission.
+- Cancellation restores the pre-run snapshot, and exact-map fallback requires
+  a separate explicit approval.
 - The hosted demo never submits a third-party form.
 - Mochi does not bypass CAPTCHAs, anti-bot controls, or website terms.

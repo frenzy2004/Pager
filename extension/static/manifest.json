@@ -2,6 +2,7 @@
   "manifest_version": 3,
   "name": "Mochi — Context that can act",
   "version": "0.1.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAjTeG3pN6hhCY+f5OHrMmcJ2jJYIbsm6ZBx/mY6SXAZBzPMMBJ0zsiP6NYhTet8tuQqmXxmzRyFRUYicHql3A5JdBfoGLOTFUW8jELLfERdVypPQnaNhxp7EET8h3cSVoSAY1P6JburmzlUc+4tXuoyyF9rhSGpTiZn6AwBzo2NqpvGujP/lH+1su7RtpSTJswXm4vap2nD1/MUpM4G1HtBGtYc+ylZl4xjWHNDveQv5914klMpImLtgQ7IO+LDB6g1Qn5XsOnBFCX4dznm7dRyonpIgiQwKuS77uTTElX/3GGftO2DDQTpirBHl2B1y8aw3zdrZCWj/itUybcajZawIDAQAB",
   "description": "Capture context across tabs and let Mochi safely help with forms.",
   "minimum_chrome_version": "116",
   "permissions": [

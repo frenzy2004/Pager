@@ -516,6 +516,74 @@ button:disabled {
   width: 100%;
 }
 
+.execution-preview {
+  background: #fffdf8;
+  border: 1px solid rgba(116, 103, 245, 0.28);
+  border-radius: 14px;
+  margin-top: 12px;
+  padding: 12px;
+}
+
+.execution-preview > strong {
+  font-size: 11px;
+}
+
+.execution-preview dl,
+.execution-preview p {
+  margin: 8px 0 0;
+}
+
+.execution-preview dl {
+  display: grid;
+  gap: 8px;
+}
+
+.execution-preview dl div {
+  border-top: 1px solid rgba(29, 29, 26, 0.08);
+  padding-top: 7px;
+}
+
+.execution-preview dt {
+  color: #6b6861;
+  font-size: 9px;
+  text-transform: capitalize;
+}
+
+.execution-preview dd,
+.execution-preview p {
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.execution-preview dd {
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.execution-note,
+.fallback-offer {
+  margin: 12px 0 0;
+  border: 1px solid rgba(116, 103, 245, 0.24);
+  border-radius: 14px;
+  background: #f4f1ff;
+  color: #4f4878;
+  padding: 12px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.fallback-offer strong {
+  color: #1d1d1a;
+}
+
+.fallback-offer p {
+  margin: 4px 0 10px;
+}
+
+.fallback-offer .execute-button {
+  margin-top: 0;
+}
+
 .panel-error {
   align-items: center;
   background: #ffe2dc;

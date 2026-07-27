@@ -24,9 +24,27 @@ export interface SafeFieldEntry {
 const excludedAutocomplete = /^(?:current-password|new-password|one-time-code|cc-)/i;
 const sensitiveLanguage =
   /password|passcode|one[\s_-]?time|\botp\b|credit[\s_-]?card|card[\s_-]?number|\bcvv\b|\bcvc\b|social[\s_-]?security|\bssn\b|routing[\s_-]?number|bank[\s_-]?account|\biban\b/i;
+const MAX_DISCOVERY_CANDIDATES = 300;
+const MAX_FIELDS = 30;
+const MAX_OPTIONS = 30;
 
 function compact(value: string | null | undefined) {
   return (value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function boundedOption(value: string | null | undefined) {
+  return compact(value).slice(0, 120);
+}
+
+function appendOption(options: string[], value: string | null | undefined) {
+  const bounded = boundedOption(value);
+  if (
+    bounded &&
+    options.length < MAX_OPTIONS &&
+    !options.includes(bounded)
+  ) {
+    options.push(bounded);
+  }
 }
 
 function keyFor(
@@ -110,6 +128,54 @@ function typeFor(
   return null;
 }
 
+export function isRenderedElement(
+  root: Document,
+  element: Element,
+) {
+  const view = root.defaultView;
+  if (!view) return true;
+
+  let ancestor: Element | null = element;
+  while (ancestor) {
+    const style = view.getComputedStyle(ancestor);
+    const opacity = Number.parseFloat(style.opacity);
+    if (
+      style.display === "none" ||
+      style.visibility === "hidden" ||
+      style.visibility === "collapse" ||
+      (!Number.isNaN(opacity) && opacity <= 0.01) ||
+      style.getPropertyValue("content-visibility") === "hidden"
+    ) {
+      return false;
+    }
+    ancestor = ancestor.parentElement;
+  }
+
+  const documentRect = root.documentElement.getBoundingClientRect();
+  if (documentRect.width > 0 && documentRect.height > 0) {
+    const rect = element.getBoundingClientRect();
+    const documentTop = rect.top + view.scrollY;
+    const documentBottom = rect.bottom + view.scrollY;
+    const documentHeight = Math.max(
+      root.documentElement.scrollHeight,
+      root.body?.scrollHeight ?? 0,
+      documentRect.height,
+      view.innerHeight,
+    );
+    if (
+      rect.width <= 0 ||
+      rect.height <= 0 ||
+      rect.right <= 0 ||
+      rect.left >= view.innerWidth ||
+      documentBottom <= 0 ||
+      documentTop >= documentHeight
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function isSafeElement(
   root: Document,
   element: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement,
@@ -118,9 +184,8 @@ function isSafeElement(
   if (
     element.disabled ||
     element.hasAttribute("readonly") ||
-    element.closest("[hidden], [aria-hidden='true']") ||
-    element.style.display === "none" ||
-    element.style.visibility === "hidden"
+    element.closest("[hidden], [aria-hidden='true'], [inert]") ||
+    !isRenderedElement(root, element)
   ) {
     return false;
   }
@@ -145,46 +210,63 @@ function isSafeElement(
 }
 
 export function discoverSafeFieldEntries(root: Document): SafeFieldEntry[] {
-  const candidates = Array.from(
-    root.querySelectorAll<
-      HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
-    >("input, textarea, select"),
-  );
+  const candidates = root.querySelectorAll<
+    HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+  >("input, textarea, select");
   const groups = new Map<string, SafeFieldEntry>();
 
-  candidates.forEach((element, index) => {
+  for (
+    let index = 0;
+    index < candidates.length &&
+    index < MAX_DISCOVERY_CANDIDATES &&
+    groups.size < MAX_FIELDS;
+    index += 1
+  ) {
+    const element = candidates[index]!;
     if (!isSafeElement(root, element, index)) {
-      return;
+      continue;
     }
 
     const type = typeFor(element);
     if (!type) {
-      return;
+      continue;
     }
 
     const key = keyFor(element, index);
     const groupKey = type === "radio" ? `radio:${key}` : `field:${key}`;
     const existing = groups.get(groupKey);
     if (existing) {
+      if (existing.elements.length >= MAX_OPTIONS) {
+        continue;
+      }
       existing.elements.push(element);
       existing.field.required ||= element.required;
       if (type === "radio" && element instanceof HTMLInputElement) {
-        existing.field.options = [
-          ...(existing.field.options ?? []),
-          element.value,
-        ];
+        const options = existing.field.options ?? [];
+        appendOption(options, element.value);
+        existing.field.options = options;
       }
-      return;
+      continue;
     }
 
-    const options =
-      type === "select" && element instanceof HTMLSelectElement
-        ? Array.from(element.options)
-            .filter((option) => option.value.length > 0)
-            .map((option) => compact(option.textContent) || option.value)
-        : type === "radio" && element instanceof HTMLInputElement
-          ? [element.value]
-          : undefined;
+    let options: string[] | undefined;
+    if (type === "select" && element instanceof HTMLSelectElement) {
+      options = [];
+      for (
+        let optionIndex = 0;
+        optionIndex < element.options.length &&
+        options.length < MAX_OPTIONS;
+        optionIndex += 1
+      ) {
+        const option = element.options[optionIndex]!;
+        if (option.value.length > 0) {
+          appendOption(options, option.textContent || option.value);
+        }
+      }
+    } else if (type === "radio" && element instanceof HTMLInputElement) {
+      options = [];
+      appendOption(options, element.value);
+    }
 
     groups.set(groupKey, {
       field: {
@@ -196,9 +278,9 @@ export function discoverSafeFieldEntries(root: Document): SafeFieldEntry[] {
       },
       elements: [element],
     });
-  });
+  }
 
-  return Array.from(groups.values()).slice(0, 30);
+  return Array.from(groups.values());
 }
 
 export function discoverSafeFields(root: Document): SafeField[] {

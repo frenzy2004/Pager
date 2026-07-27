@@ -26,6 +26,11 @@ interface RuntimeEnvelope {
   error?: string;
 }
 
+interface ExecutionPreview {
+  status: "preview";
+  values: Record<string, string>;
+}
+
 const missions: Array<{ value: Preset; label: string }> = [
   { value: "job", label: "Job application" },
   { value: "lead", label: "Sales lead" },
@@ -79,10 +84,23 @@ function unwrapRuntimeResponse(value: unknown) {
   return value;
 }
 
+function isExecutionPreview(value: unknown): value is ExecutionPreview {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "status" in value &&
+    value.status === "preview" &&
+    "values" in value &&
+    typeof value.values === "object" &&
+    value.values !== null
+  );
+}
+
 export function App({ runtime }: AppProps) {
   const [session, setSession] = useState(createEmptySession);
   const [working, setWorking] = useState(false);
   const [localError, setLocalError] = useState("");
+  const [preview, setPreview] = useState<ExecutionPreview | null>(null);
 
   const selectedStrategy =
     session.strategies.find(
@@ -94,6 +112,7 @@ export function App({ runtime }: AppProps) {
     const removeListener = runtime.addMessageListener((message) => {
       if (message.type === "SESSION_UPDATED" && active) {
         setSession(message.session);
+        setPreview(null);
       }
     });
 
@@ -126,6 +145,8 @@ export function App({ runtime }: AppProps) {
       const value = unwrapRuntimeResponse(await runtime.sendMessage(message));
       if (isSession(value)) {
         setSession(value);
+      } else if (isExecutionPreview(value)) {
+        setPreview(value);
       }
     } catch (error) {
       setLocalError(
@@ -137,16 +158,19 @@ export function App({ runtime }: AppProps) {
   };
 
   const setPreset = (preset: Preset) => {
+    setPreview(null);
     setSession((current) => ({ ...current, preset }));
     void send({ type: "SET_PRESET", preset });
   };
 
   const setMode = (mode: ExecutionMode) => {
+    setPreview(null);
     setSession((current) => ({ ...current, executionMode: mode }));
     void send({ type: "SET_MODE", mode });
   };
 
   const selectStrategy = (strategyId: Strategy["id"]) => {
+    setPreview(null);
     setSession((current) => ({ ...current, selectedStrategyId: strategyId }));
     void send({ type: "SELECT_STRATEGY", strategyId });
   };
@@ -276,6 +300,7 @@ export function App({ runtime }: AppProps) {
             placeholder="e.g. Keep this warm, concise, and grounded in the screenshots…"
             onChange={(event) => {
               const taskHint = event.target.value;
+              setPreview(null);
               setSession((current) => ({ ...current, taskHint }));
             }}
             onBlur={() =>
@@ -353,9 +378,29 @@ export function App({ runtime }: AppProps) {
           >
             {session.executionCountdown
               ? `Autopilot in ${session.executionCountdown}…`
-              : `Execute with ${selectedStrategy?.label ?? "selected route"}`}
+              : session.executionMode === "review"
+                ? `Preview ${selectedStrategy?.label ?? "selected route"}`
+                : `Execute with ${selectedStrategy?.label ?? "selected route"}`}
             <span aria-hidden="true">↗</span>
           </button>
+
+          {preview && (
+            <div className="execution-preview" aria-label="Proposed field values">
+              <strong>Review these proposed values</strong>
+              {Object.entries(preview.values).length > 0 ? (
+                <dl>
+                  {Object.entries(preview.values).map(([key, value]) => (
+                    <div key={key}>
+                      <dt>{key.replace(/[_-]+/g, " ")}</dt>
+                      <dd>{value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              ) : (
+                <p>No supported values are ready for this form.</p>
+              )}
+            </div>
+          )}
 
           {session.status === "executing" && (
             <button
@@ -366,14 +411,46 @@ export function App({ runtime }: AppProps) {
               Cancel execution
             </button>
           )}
-          {session.lastExecution && (
-            <button
-              className="text-button"
-              type="button"
-              onClick={() => void send({ type: "UNDO" })}
-            >
-              Undo last fill
-            </button>
+          {session.lastExecution?.status === "submitted" && (
+            <p className="execution-note">
+              Mochi submitted this form once. A web submission cannot be
+              reversed with Undo.
+            </p>
+          )}
+          {session.lastExecution?.status === "filled" && (
+            <>
+              {session.lastExecution.warning && (
+                <p className="execution-note">
+                  {session.lastExecution.warning}
+                </p>
+              )}
+              <button
+                className="text-button"
+                type="button"
+                onClick={() => void send({ type: "UNDO" })}
+              >
+                Undo last fill
+              </button>
+            </>
+          )}
+          {session.fallbackOffer && (
+            <div className="fallback-offer">
+              <strong>Page Agent stopped safely.</strong>
+              <p>
+                No partial changes remain. Exact fill uses only Mochi&apos;s
+                visible safe-field map and never submits.
+              </p>
+              <button
+                className="execute-button"
+                type="button"
+                disabled={working}
+                onClick={() =>
+                  void send({ type: "EXECUTE_EXACT_FALLBACK" })
+                }
+              >
+                Approve safe exact fill
+              </button>
+            </div>
           )}
         </section>
       )}

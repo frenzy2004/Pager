@@ -51,7 +51,14 @@ function readySession(): ConnectorSession {
         rationale: "Clear, warm, and grounded.",
         confidence: 0.88,
         accent: "violet",
-        fields: {},
+        fields: {
+          name: {
+            value: "Jamie Chen",
+            status: "supported",
+            confidence: 1,
+            sourceIds: [],
+          },
+        },
         sources: [],
       },
       {
@@ -110,7 +117,17 @@ describe("global Mochi side panel", () => {
 
   it("shows shared captures, three strategies, and safe execution modes", async () => {
     const user = userEvent.setup();
-    const panelRuntime = runtime(readySession());
+    const session = readySession();
+    const panelRuntime = runtime(session);
+    panelRuntime.sendMessage.mockImplementation(
+      async (message: ConnectorMessage) => ({
+        ok: true,
+        result:
+          message.type === "SET_MODE"
+            ? { ...session, executionMode: message.mode }
+            : session,
+      }),
+    );
     render(<App runtime={panelRuntime} />);
 
     expect(await screen.findByText("2 / 8")).toBeInTheDocument();
@@ -133,6 +150,38 @@ describe("global Mochi side panel", () => {
     expect(panelRuntime.sendMessage).toHaveBeenCalledWith({
       type: "EXECUTE",
     });
+  });
+
+  it("renders the exact field-value preview returned by Review mode", async () => {
+    const user = userEvent.setup();
+    const session = readySession();
+    const panelRuntime = runtime(session);
+    panelRuntime.sendMessage.mockImplementation(
+      async (message: ConnectorMessage) => ({
+        ok: true,
+        result:
+          message.type === "EXECUTE"
+            ? {
+                status: "preview",
+                adapter: "page-agent",
+                values: { name: "Jamie Chen" },
+                changedFields: 0,
+              }
+            : session,
+      }),
+    );
+    render(<App runtime={panelRuntime} />);
+
+    await user.click(
+      await screen.findByRole("button", { name: /preview balanced/i }),
+    );
+
+    expect(
+      screen.getByLabelText("Proposed field values"),
+    ).toHaveTextContent("name");
+    expect(
+      screen.getByLabelText("Proposed field values"),
+    ).toHaveTextContent("Jamie Chen");
   });
 
   it("can remove, clear, and analyze accumulated captures", async () => {
@@ -159,5 +208,73 @@ describe("global Mochi side panel", () => {
         type: "ANALYZE",
       });
     });
+  });
+
+  it("surfaces Page Agent fallback as an explicit approval and keeps warnings visible", async () => {
+    const user = userEvent.setup();
+    const session = {
+      ...readySession(),
+      error:
+        "Page Agent stopped without leaving partial changes. You can retry.",
+      fallbackOffer: {
+        tabId: 7,
+        windowId: 3,
+        tabUrl: "https://forms.example.test/apply",
+        documentId: "document-original",
+        fieldManifestKey: "[]",
+        strategy: readySession().strategies[1]!,
+        reason: "Provider offline",
+      },
+      lastExecution: {
+        tabId: 7,
+        windowId: 3,
+        tabUrl: "https://forms.example.test/apply",
+        documentId: "document-original",
+        fieldManifestKey: "[]",
+        changedFields: 1,
+        completedAt: "2026-07-26T12:00:00.000Z",
+        adapter: "exact-fallback" as const,
+        status: "filled" as const,
+        warning: "Exact fill never submitted the form.",
+      },
+    };
+    const panelRuntime = runtime(session);
+    render(<App runtime={panelRuntime} />);
+
+    expect(
+      await screen.findByText(/exact fill never submitted/i),
+    ).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: /approve safe exact fill/i }),
+    );
+
+    expect(panelRuntime.sendMessage).toHaveBeenCalledWith({
+      type: "EXECUTE_EXACT_FALLBACK",
+    });
+  });
+
+  it("does not imply that a completed web submission can be undone", async () => {
+    const session: ConnectorSession = {
+      ...readySession(),
+      lastExecution: {
+        tabId: 7,
+        windowId: 3,
+        tabUrl: "https://forms.example.test/apply",
+        documentId: "document-original",
+        fieldManifestKey: "[]",
+        changedFields: 1,
+        completedAt: "2026-07-26T12:00:00.000Z",
+        adapter: "page-agent",
+        status: "submitted",
+      },
+    };
+    render(<App runtime={runtime(session)} />);
+
+    expect(
+      await screen.findByText(/web submission cannot be reversed/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /undo last fill/i }),
+    ).not.toBeInTheDocument();
   });
 });

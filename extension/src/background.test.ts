@@ -5,6 +5,20 @@ import { createEmptySession } from "./shared/session";
 import type { ChromeAdapter } from "./shared/chrome";
 import type { ConnectorSession } from "./shared/protocol";
 
+function fieldManifest(documentId = "document-original") {
+  return {
+    documentId,
+    fields: [
+      {
+        key: "name",
+        label: "Full name",
+        type: "text",
+        required: true,
+      },
+    ],
+  };
+}
+
 function adapter(): ChromeAdapter {
   let stored = createEmptySession();
   return {
@@ -13,7 +27,14 @@ function adapter(): ChromeAdapter {
       .fn()
       .mockResolvedValue("data:image/jpeg;base64,Y2FwdHVyZQ=="),
     executeAgent: vi.fn(),
+    getInstallId: vi.fn().mockResolvedValue("install-id-stable"),
     getSession: vi.fn(async () => stored),
+    getTab: vi.fn().mockResolvedValue({
+      id: 7,
+      windowId: 3,
+      url: "https://forms.example.test/apply",
+      title: "Application",
+    }),
     openPanel: vi.fn(),
     queryActiveTab: vi.fn().mockResolvedValue({
       id: 7,
@@ -23,22 +44,75 @@ function adapter(): ChromeAdapter {
     }),
     sendTabMessage: vi.fn(async (_tabId, message) => {
       if (message.type === "DISCOVER_FIELDS") {
-        return {
-          fields: [
-            {
-              key: "name",
-              label: "Full name",
-              type: "text",
-              required: true,
-            },
-          ],
-        };
+        return fieldManifest();
+      }
+      if (message.type === "CANCEL_EXECUTION") {
+        return { status: "cancelled" };
       }
       return { ok: true };
     }),
+    setInstallId: vi.fn(),
     setSession: vi.fn(async (session) => {
       stored = session;
     }),
+    setSubmissionGuard: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
+function analyzedSession(
+  executionMode: ConnectorSession["executionMode"] = "fill",
+): ConnectorSession {
+  return {
+    ...createEmptySession(),
+    executionMode,
+    strategies: [
+      {
+        id: "safe",
+        label: "Safe & precise",
+        eyebrow: "Facts",
+        rationale: "Use facts.",
+        confidence: 0.9,
+        accent: "sage",
+        fields: {},
+        sources: [],
+      },
+      {
+        id: "balanced",
+        label: "Balanced",
+        eyebrow: "Best fit",
+        rationale: "Use grounded confidence.",
+        confidence: 0.88,
+        accent: "violet",
+        fields: {
+          name: {
+            value: "Jamie Chen",
+            status: "supported",
+            confidence: 1,
+            sourceIds: [],
+          },
+        },
+        sources: [],
+      },
+      {
+        id: "standout",
+        label: "Standout",
+        eyebrow: "Voice",
+        rationale: "Use stronger voice.",
+        confidence: 0.8,
+        accent: "coral",
+        fields: {},
+        sources: [],
+      },
+    ],
+    selectedStrategyId: "balanced",
+    analysisTarget: {
+      tabId: 7,
+      windowId: 3,
+      tabUrl: "https://forms.example.test/apply",
+      documentId: "document-original",
+      fieldManifestKey: JSON.stringify(fieldManifest().fields),
+    },
+    status: "ready",
   };
 }
 
@@ -90,6 +164,29 @@ describe("background coordinator", () => {
     });
   });
 
+  it("bounds hostile page metadata before persisting a capture", async () => {
+    const chromeAdapter = adapter();
+    vi.mocked(chromeAdapter.queryActiveTab).mockResolvedValue({
+      id: 7,
+      windowId: 3,
+      url: `https://forms.example.test/apply?payload=${"x".repeat(4_000)}`,
+      title: "T".repeat(2_000),
+    });
+    const coordinator = createBackgroundCoordinator({
+      chrome: chromeAdapter,
+      delay: vi.fn().mockResolvedValue(undefined),
+      fetch: vi.fn(),
+      normalizeImage: vi.fn(async (dataUrl) => dataUrl),
+    });
+
+    await coordinator.handle({ type: "CAPTURE_VIEWPORT" });
+
+    const capture = (await chromeAdapter.getSession()).captures[0]!;
+    expect(capture.sourceUrl.length).toBeLessThanOrEqual(2_048);
+    expect(capture.sourceUrl).toMatch(/^https:\/\/forms\.example\.test\//);
+    expect(capture.sourceTitle).toHaveLength(300);
+  });
+
   it("queues rapid captures below Chrome's two-per-second quota", async () => {
     const chromeAdapter = adapter();
     let clock = Date.parse("2026-07-26T12:00:00.000Z");
@@ -115,6 +212,143 @@ describe("background coordinator", () => {
     expect(captureTimes).toHaveLength(3);
     expect(captureTimes[1] - captureTimes[0]).toBeGreaterThanOrEqual(500);
     expect(captureTimes[2] - captureTimes[1]).toBeGreaterThanOrEqual(500);
+  });
+
+  it("rejects a ninth capture without evicting existing context", async () => {
+    const chromeAdapter = adapter();
+    await chromeAdapter.setSession({
+      ...createEmptySession(),
+      captures: Array.from({ length: 8 }, (_, index) => ({
+        id: `capture-${index}`,
+        dataUrl: "data:image/jpeg;base64,Y2FwdHVyZQ==",
+        sourceUrl: `https://example.test/${index}`,
+        sourceTitle: `Context ${index + 1}`,
+        capturedAt: "2026-07-26T12:00:00.000Z",
+        kind: "viewport" as const,
+      })),
+    });
+    const coordinator = createBackgroundCoordinator({
+      chrome: chromeAdapter,
+      delay: vi.fn().mockResolvedValue(undefined),
+      fetch: vi.fn(),
+      normalizeImage: vi.fn(async (dataUrl) => dataUrl),
+    });
+
+    await expect(
+      coordinator.handle({ type: "CAPTURE_VIEWPORT" }),
+    ).rejects.toThrow("Remove one");
+
+    expect(chromeAdapter.captureVisibleTab).not.toHaveBeenCalled();
+    expect((await chromeAdapter.getSession()).captures).toHaveLength(8);
+  });
+
+  it("serializes concurrent eighth captures and rejects the loser", async () => {
+    const chromeAdapter = adapter();
+    await chromeAdapter.setSession({
+      ...createEmptySession(),
+      captures: Array.from({ length: 7 }, (_, index) => ({
+        id: `capture-${index}`,
+        dataUrl: "data:image/jpeg;base64,Y2FwdHVyZQ==",
+        sourceUrl: `https://example.test/${index}`,
+        sourceTitle: `Context ${index + 1}`,
+        capturedAt: "2026-07-26T12:00:00.000Z",
+        kind: "viewport" as const,
+      })),
+    });
+    let releaseCapture: (() => void) | undefined;
+    vi.mocked(chromeAdapter.captureVisibleTab).mockImplementationOnce(
+      () =>
+        new Promise<string>((resolve) => {
+          releaseCapture = () =>
+            resolve("data:image/jpeg;base64,Y2FwdHVyZQ==");
+        }),
+    );
+    const coordinator = createBackgroundCoordinator({
+      chrome: chromeAdapter,
+      delay: vi.fn().mockResolvedValue(undefined),
+      fetch: vi.fn(),
+      normalizeImage: vi.fn(async (dataUrl) => dataUrl),
+    });
+
+    const first = coordinator.handle({ type: "CAPTURE_VIEWPORT" });
+    const second = coordinator.handle({ type: "CAPTURE_VIEWPORT" });
+    await vi.waitFor(() =>
+      expect(chromeAdapter.captureVisibleTab).toHaveBeenCalledOnce(),
+    );
+    releaseCapture?.();
+
+    await expect(first).resolves.toBeDefined();
+    await expect(second).rejects.toThrow("Remove one");
+    expect((await chromeAdapter.getSession()).captures).toHaveLength(8);
+    expect(chromeAdapter.captureVisibleTab).toHaveBeenCalledOnce();
+  });
+
+  it("aborts a queued capture if the user switches tabs before Chrome captures", async () => {
+    const chromeAdapter = adapter();
+    let releaseDelay: (() => void) | undefined;
+    const delay = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseDelay = resolve;
+        }),
+    );
+    const coordinator = createBackgroundCoordinator({
+      chrome: chromeAdapter,
+      delay,
+      fetch: vi.fn(),
+      normalizeImage: vi.fn(async (dataUrl) => dataUrl),
+    });
+
+    const pending = coordinator.handle({ type: "CAPTURE_VIEWPORT" });
+    await vi.waitFor(() => expect(delay).toHaveBeenCalled());
+    vi.mocked(chromeAdapter.queryActiveTab).mockResolvedValue({
+      id: 9,
+      windowId: 3,
+      url: "https://other.example.test/",
+      title: "Other",
+    });
+    releaseDelay?.();
+
+    await expect(pending).rejects.toThrow("tab changed");
+    expect(chromeAdapter.captureVisibleTab).not.toHaveBeenCalled();
+    expect(chromeAdapter.sendTabMessage).toHaveBeenLastCalledWith(7, {
+      type: "SHOW_PET",
+    });
+  });
+
+  it("discards a capture if the tab changes while Chrome is capturing", async () => {
+    const chromeAdapter = adapter();
+    vi.mocked(chromeAdapter.queryActiveTab)
+      .mockResolvedValueOnce({
+        id: 7,
+        windowId: 3,
+        url: "https://forms.example.test/apply",
+        title: "Application",
+      })
+      .mockResolvedValueOnce({
+        id: 7,
+        windowId: 3,
+        url: "https://forms.example.test/apply",
+        title: "Application",
+      })
+      .mockResolvedValue({
+        id: 9,
+        windowId: 3,
+        url: "https://other.example.test/",
+        title: "Other",
+      });
+    const coordinator = createBackgroundCoordinator({
+      chrome: chromeAdapter,
+      delay: vi.fn().mockResolvedValue(undefined),
+      fetch: vi.fn(),
+      normalizeImage: vi.fn(async (dataUrl) => dataUrl),
+    });
+
+    await expect(
+      coordinator.handle({ type: "CAPTURE_VIEWPORT" }),
+    ).rejects.toThrow("discarded");
+
+    expect((await chromeAdapter.getSession()).captures).toHaveLength(0);
   });
 
   it("restores the pet even when Chrome capture fails", async () => {
@@ -178,6 +412,80 @@ describe("background coordinator", () => {
     });
   });
 
+  it("does not resurrect a region capture after Clear cancels its snip", async () => {
+    const chromeAdapter = adapter();
+    let finishSnip:
+      | ((value: { dataUrl: string }) => void)
+      | undefined;
+    vi.mocked(chromeAdapter.sendTabMessage).mockImplementation(
+      async (_tabId, message) => {
+        if (message.type === "BEGIN_FROZEN_SNIP") {
+          return new Promise((resolve) => {
+            finishSnip = resolve;
+          });
+        }
+        if (message.type === "CANCEL_SNIP") {
+          return { status: "cancelled" };
+        }
+        return { ok: true };
+      },
+    );
+    const coordinator = createBackgroundCoordinator({
+      chrome: chromeAdapter,
+      delay: vi.fn().mockResolvedValue(undefined),
+      fetch: vi.fn(),
+      normalizeImage: vi.fn(async (dataUrl) => dataUrl),
+    });
+
+    const pendingCapture = coordinator.handle({ type: "START_SNIP" });
+    await vi.waitFor(async () => {
+      expect((await chromeAdapter.getSession()).captureLease).toMatchObject({
+        kind: "region",
+      });
+    });
+    await coordinator.handle({ type: "CLEAR_SESSION" });
+    finishSnip?.({ dataUrl: "data:image/jpeg;base64,Y3JvcA==" });
+    await pendingCapture;
+
+    expect(chromeAdapter.sendTabMessage).toHaveBeenCalledWith(7, {
+      type: "CANCEL_SNIP",
+    });
+    expect(await chromeAdapter.getSession()).toEqual(createEmptySession());
+  });
+
+  it("does not let capture preflight overtake Clear", async () => {
+    const chromeAdapter = adapter();
+    const baseGetSession = vi
+      .mocked(chromeAdapter.getSession)
+      .getMockImplementation()!;
+    let releasePreflight: (() => void) | undefined;
+    let getSessionCalls = 0;
+    vi.mocked(chromeAdapter.getSession).mockImplementation(async () => {
+      getSessionCalls += 1;
+      if (getSessionCalls === 1) {
+        await new Promise<void>((resolve) => {
+          releasePreflight = resolve;
+        });
+      }
+      return baseGetSession();
+    });
+    const coordinator = createBackgroundCoordinator({
+      chrome: chromeAdapter,
+      delay: vi.fn().mockResolvedValue(undefined),
+      fetch: vi.fn(),
+      normalizeImage: vi.fn(async (dataUrl) => dataUrl),
+    });
+
+    const capture = coordinator.handle({ type: "CAPTURE_VIEWPORT" });
+    await vi.waitFor(() => expect(getSessionCalls).toBe(1));
+    await coordinator.handle({ type: "CLEAR_SESSION" });
+    releasePreflight?.();
+    await capture;
+
+    expect(chromeAdapter.captureVisibleTab).not.toHaveBeenCalled();
+    expect(await chromeAdapter.getSession()).toEqual(createEmptySession());
+  });
+
   it("posts analysis and Page Agent calls only to fixed Vercel routes", async () => {
     const chromeAdapter = adapter();
     await chromeAdapter.setSession({
@@ -193,12 +501,34 @@ describe("background coordinator", () => {
         },
       ],
     });
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            strategies: [
+    let connectorCalls = 0;
+    const fetchMock = vi.fn(
+      async (input: string, init?: RequestInit) => {
+        void init;
+        if (input.endsWith("/api/connector/session")) {
+          connectorCalls += 1;
+          return connectorCalls === 1
+            ? new Response(
+                JSON.stringify({
+                  challengeToken:
+                    "challenge-token-with-more-than-forty-characters-123",
+                  difficulty: 8,
+                  expiresAt: Date.now() + 60_000,
+                }),
+                { status: 428 },
+              )
+            : new Response(
+                JSON.stringify({
+                  token: "signed-connector-token",
+                  expiresAt: Date.now() + 15 * 60_000,
+                }),
+                { status: 200 },
+              );
+        }
+        if (input.endsWith("/api/analyze")) {
+          return new Response(
+            JSON.stringify({
+              strategies: [
               {
                 id: "safe",
                 label: "Safe & precise",
@@ -229,14 +559,108 @@ describe("background coordinator", () => {
                 fields: {},
                 sources: [],
               },
+              ],
+            }),
+            { status: 200 },
+          );
+        }
+        return new Response('{"choices":[]}', { status: 200 });
+      },
+    );
+    vi.mocked(chromeAdapter.sendTabMessage).mockImplementation(
+      async (_tabId, message) => {
+        if (message.type === "DISCOVER_FIELDS") {
+          return {
+            documentId: "document-original",
+            fields: [
+              {
+                key: "name",
+                label: "Full name",
+                type: "text",
+                required: true,
+              },
             ],
+          };
+        }
+        if (message.type === "RUN_PAGE_AGENT") {
+          await coordinator.handle({
+            type: "FETCH_PAGE_AGENT",
+            body: '{"messages":[]}',
+            executionId: message.executionId,
+          });
+          return {
+            status: "filled",
+            adapter: "page-agent",
+            values: {},
+            changedFields: 0,
+          };
+        }
+        return { ok: true };
+      },
+    );
+    const coordinator = createBackgroundCoordinator({
+      chrome: chromeAdapter,
+      delay: vi.fn().mockResolvedValue(undefined),
+      fetch: fetchMock,
+      normalizeImage: vi.fn(async (dataUrl) => dataUrl),
+      solveChallenge: vi.fn().mockResolvedValue("42"),
+    });
+
+    await coordinator.handle({ type: "ANALYZE" });
+    await coordinator.handle({ type: "SET_MODE", mode: "fill" });
+    await coordinator.handle({ type: "EXECUTE" });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "https://mochi-overlay.vercel.app/api/connector/session",
+    );
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(
+      "https://mochi-overlay.vercel.app/api/connector/session",
+    );
+    expect(fetchMock.mock.calls[2]?.[0]).toBe(
+      "https://mochi-overlay.vercel.app/api/analyze",
+    );
+    expect(fetchMock.mock.calls[3]?.[0]).toBe(
+      "https://mochi-overlay.vercel.app/api/page-agent/chat/completions",
+    );
+    expect(fetchMock.mock.calls[3]?.[1]).toMatchObject({
+      headers: {
+        authorization: "Bearer signed-connector-token",
+        "content-type": "application/json",
+        "x-mochi-extension-id": "fljecmlbnknpeehjcffenmjjnenmkjea",
+      },
+    });
+  });
+
+  it("rejects a duplicate analysis without cancelling the in-flight result", async () => {
+    const chromeAdapter = adapter();
+    await chromeAdapter.setSession({
+      ...createEmptySession(),
+      captures: [
+        {
+          id: "capture-1",
+          dataUrl: "data:image/jpeg;base64,Y2FwdHVyZQ==",
+          sourceUrl: "https://forms.example.test/apply",
+          sourceTitle: "Application",
+          capturedAt: "2026-07-26T12:00:00.000Z",
+          kind: "viewport",
+        },
+      ],
+    });
+    let releaseAnalysis: ((response: Response) => void) | undefined;
+    const fetchMock = vi.fn(async (input: string) => {
+      if (input.endsWith("/api/connector/session")) {
+        return new Response(
+          JSON.stringify({
+            token: "signed-connector-token",
+            expiresAt: Date.now() + 60_000,
           }),
           { status: 200 },
-        ),
-      )
-      .mockResolvedValueOnce(
-        new Response('{"choices":[]}', { status: 200 }),
-      );
+        );
+      }
+      return new Promise<Response>((resolve) => {
+        releaseAnalysis = resolve;
+      });
+    });
     const coordinator = createBackgroundCoordinator({
       chrome: chromeAdapter,
       delay: vi.fn().mockResolvedValue(undefined),
@@ -244,70 +668,35 @@ describe("background coordinator", () => {
       normalizeImage: vi.fn(async (dataUrl) => dataUrl),
     });
 
-    await coordinator.handle({ type: "ANALYZE" });
-    await coordinator.handle({
-      type: "FETCH_PAGE_AGENT",
-      body: '{"messages":[]}',
+    const first = coordinator.handle({ type: "ANALYZE" });
+    await vi.waitFor(async () => {
+      expect((await chromeAdapter.getSession()).status).toBe("analyzing");
     });
+    await expect(
+      coordinator.handle({ type: "ANALYZE" }),
+    ).rejects.toThrow("already analyzing");
+    expect((await chromeAdapter.getSession()).status).toBe("analyzing");
 
-    expect(fetchMock.mock.calls[0]?.[0]).toBe(
-      "https://mochi-overlay.vercel.app/api/analyze",
+    releaseAnalysis?.(
+      new Response(
+        JSON.stringify({ strategies: analyzedSession().strategies }),
+        { status: 200 },
+      ),
     );
-    expect(fetchMock.mock.calls[1]?.[0]).toBe(
-      "https://mochi-overlay.vercel.app/api/page-agent/chat/completions",
-    );
+    await first;
+    expect((await chromeAdapter.getSession()).status).toBe("ready");
+    expect((await chromeAdapter.getSession()).strategies).toHaveLength(3);
   });
 
   it("injects Alibaba Page Agent and enforces the autopilot countdown", async () => {
     const chromeAdapter = adapter();
-    const analyzed: ConnectorSession = {
-      ...createEmptySession(),
-      executionMode: "autopilot" as const,
-      strategies: [
-        {
-          id: "safe" as const,
-          label: "Safe & precise" as const,
-          eyebrow: "Facts",
-          rationale: "Use facts.",
-          confidence: 0.9,
-          accent: "sage" as const,
-          fields: {},
-          sources: [],
-        },
-        {
-          id: "balanced" as const,
-          label: "Balanced" as const,
-          eyebrow: "Best fit",
-          rationale: "Use grounded confidence.",
-          confidence: 0.88,
-          accent: "violet" as const,
-          fields: {
-            name: {
-              value: "Jamie Chen",
-              status: "supported" as const,
-              confidence: 1,
-              sourceIds: [],
-            },
-          },
-          sources: [],
-        },
-        {
-          id: "standout" as const,
-          label: "Standout" as const,
-          eyebrow: "Voice",
-          rationale: "Use stronger voice.",
-          confidence: 0.8,
-          accent: "coral" as const,
-          fields: {},
-          sources: [],
-        },
-      ],
-      selectedStrategyId: "balanced" as const,
-      status: "ready" as const,
-    };
+    const analyzed = analyzedSession("autopilot");
     await chromeAdapter.setSession(analyzed);
     vi.mocked(chromeAdapter.sendTabMessage).mockImplementation(
       async (_tabId, message) => {
+        if (message.type === "DISCOVER_FIELDS") {
+          return fieldManifest();
+        }
         if (message.type === "RUN_PAGE_AGENT") {
           return {
             status: "submitted",
@@ -332,15 +721,855 @@ describe("background coordinator", () => {
     expect(delay).toHaveBeenCalledTimes(3);
     expect(delay).toHaveBeenNthCalledWith(1, 1_000);
     expect(chromeAdapter.executeAgent).toHaveBeenCalledWith(7);
-    expect(chromeAdapter.sendTabMessage).toHaveBeenCalledWith(7, {
-      type: "RUN_PAGE_AGENT",
-      strategy: analyzed.strategies[1],
-      mode: "autopilot",
-    });
+    expect(chromeAdapter.sendTabMessage).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({
+        type: "RUN_PAGE_AGENT",
+        strategy: analyzed.strategies[1],
+        mode: "autopilot",
+        executionId: expect.any(String),
+      }),
+    );
     expect((await chromeAdapter.getSession()).lastExecution).toMatchObject({
       tabId: 7,
       changedFields: 1,
     });
     expect((await chromeAdapter.getSession()).executionCountdown).toBeNull();
+  });
+
+  it("allows only one execution operation to claim the analyzed form", async () => {
+    const chromeAdapter = adapter();
+    await chromeAdapter.setSession(analyzedSession("fill"));
+    let finish:
+      | ((value: {
+          status: "filled";
+          adapter: "page-agent";
+          values: Record<string, string>;
+          changedFields: number;
+        }) => void)
+      | undefined;
+    vi.mocked(chromeAdapter.sendTabMessage).mockImplementation(
+      async (_tabId, message) => {
+        if (message.type === "DISCOVER_FIELDS") return fieldManifest();
+        if (message.type === "RUN_PAGE_AGENT") {
+          return new Promise((resolve) => {
+            finish = resolve;
+          });
+        }
+        return { ok: true };
+      },
+    );
+    const coordinator = createBackgroundCoordinator({
+      chrome: chromeAdapter,
+      delay: vi.fn().mockResolvedValue(undefined),
+      fetch: vi.fn(),
+      normalizeImage: vi.fn(async (dataUrl) => dataUrl),
+    });
+
+    const first = coordinator.handle({ type: "EXECUTE" });
+    const second = coordinator.handle({ type: "EXECUTE" });
+
+    await expect(second).rejects.toThrow("already executing");
+    await vi.waitFor(() =>
+      expect(chromeAdapter.sendTabMessage).toHaveBeenCalledWith(
+        7,
+        expect.objectContaining({ type: "RUN_PAGE_AGENT" }),
+      ),
+    );
+    finish?.({
+      status: "filled",
+      adapter: "page-agent",
+      values: { name: "Jamie Chen" },
+      changedFields: 1,
+    });
+    await first;
+
+    expect(chromeAdapter.executeAgent).toHaveBeenCalledOnce();
+    expect(
+      vi.mocked(chromeAdapter.sendTabMessage).mock.calls.filter(
+        ([, message]) => message.type === "RUN_PAGE_AGENT",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("lets Clear invalidate an execution still discovering its target", async () => {
+    const chromeAdapter = adapter();
+    await chromeAdapter.setSession(analyzedSession("fill"));
+    let releaseDiscovery:
+      | ((value: ReturnType<typeof fieldManifest>) => void)
+      | undefined;
+    vi.mocked(chromeAdapter.sendTabMessage).mockImplementation(
+      async (_tabId, message) => {
+        if (message.type === "DISCOVER_FIELDS") {
+          return new Promise((resolve) => {
+            releaseDiscovery = resolve;
+          });
+        }
+        return { ok: true };
+      },
+    );
+    const coordinator = createBackgroundCoordinator({
+      chrome: chromeAdapter,
+      delay: vi.fn().mockResolvedValue(undefined),
+      fetch: vi.fn(),
+      normalizeImage: vi.fn(async (dataUrl) => dataUrl),
+    });
+
+    const executing = coordinator.handle({ type: "EXECUTE" });
+    await vi.waitFor(() =>
+      expect(chromeAdapter.sendTabMessage).toHaveBeenCalledWith(7, {
+        type: "DISCOVER_FIELDS",
+      }),
+    );
+    const clearing = coordinator.handle({ type: "CLEAR_SESSION" });
+    releaseDiscovery?.(fieldManifest());
+
+    await expect(executing).rejects.toThrow("shared context changed");
+    await expect(clearing).resolves.toEqual(createEmptySession());
+    expect(chromeAdapter.executeAgent).not.toHaveBeenCalled();
+    expect(await chromeAdapter.getSession()).toEqual(createEmptySession());
+  });
+
+  it("binds execution to its original tab and aborts after a tab switch", async () => {
+    const chromeAdapter = adapter();
+    await chromeAdapter.setSession(analyzedSession("autopilot"));
+    let delays = 0;
+    const coordinator = createBackgroundCoordinator({
+      chrome: chromeAdapter,
+      delay: vi.fn(async () => {
+        delays += 1;
+        if (delays === 1) {
+          vi.mocked(chromeAdapter.queryActiveTab).mockResolvedValue({
+            id: 9,
+            windowId: 3,
+            url: "https://other.example.test/",
+            title: "Other",
+          });
+        }
+      }),
+      fetch: vi.fn(),
+      normalizeImage: vi.fn(async (dataUrl) => dataUrl),
+    });
+
+    await expect(coordinator.handle({ type: "EXECUTE" })).rejects.toThrow(
+      "tab changed",
+    );
+    expect(chromeAdapter.executeAgent).not.toHaveBeenCalled();
+  });
+
+  it("refuses to run an analyzed strategy on a different active form", async () => {
+    const chromeAdapter = adapter();
+    await chromeAdapter.setSession(analyzedSession("fill"));
+    vi.mocked(chromeAdapter.queryActiveTab).mockResolvedValue({
+      id: 9,
+      windowId: 3,
+      url: "https://other.example.test/apply",
+      title: "Other application",
+    });
+    const coordinator = createBackgroundCoordinator({
+      chrome: chromeAdapter,
+      delay: vi.fn().mockResolvedValue(undefined),
+      fetch: vi.fn(),
+      normalizeImage: vi.fn(async (dataUrl) => dataUrl),
+    });
+
+    await expect(coordinator.handle({ type: "EXECUTE" })).rejects.toThrow(
+      "exact form",
+    );
+    expect(chromeAdapter.executeAgent).not.toHaveBeenCalled();
+  });
+
+  it("rechecks document identity after injection before sending a strategy", async () => {
+    const chromeAdapter = adapter();
+    await chromeAdapter.setSession(analyzedSession("fill"));
+    let documentId = "document-original";
+    vi.mocked(chromeAdapter.sendTabMessage).mockImplementation(
+      async (_tabId, message) => {
+        if (message.type === "DISCOVER_FIELDS") {
+          return fieldManifest(documentId);
+        }
+        if (message.type === "RUN_PAGE_AGENT") {
+          return {
+            status: "filled",
+            adapter: "page-agent",
+            changedFields: 1,
+          };
+        }
+        return { ok: true };
+      },
+    );
+    vi.mocked(chromeAdapter.executeAgent).mockImplementation(async () => {
+      documentId = "document-reloaded";
+    });
+    const coordinator = createBackgroundCoordinator({
+      chrome: chromeAdapter,
+      delay: vi.fn().mockResolvedValue(undefined),
+      fetch: vi.fn(),
+      normalizeImage: vi.fn(async (dataUrl) => dataUrl),
+    });
+
+    await expect(coordinator.handle({ type: "EXECUTE" })).rejects.toThrow(
+      "form changed",
+    );
+    expect(chromeAdapter.sendTabMessage).not.toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ type: "RUN_PAGE_AGENT" }),
+    );
+  });
+
+  it("sends cancellation to the tab where execution began", async () => {
+    const chromeAdapter = adapter();
+    await chromeAdapter.setSession(analyzedSession("fill"));
+    let finish:
+      | ((value: {
+          status: "cancelled";
+          values: Record<string, string>;
+          changedFields: number;
+        }) => void)
+      | undefined;
+    vi.mocked(chromeAdapter.sendTabMessage).mockImplementation(
+      async (_tabId, message) => {
+        if (message.type === "DISCOVER_FIELDS") {
+          return fieldManifest();
+        }
+        if (message.type === "RUN_PAGE_AGENT") {
+          return new Promise((resolve) => {
+            finish = resolve;
+          });
+        }
+        if (message.type === "CANCEL_EXECUTION") {
+          return { status: "cancelled" };
+        }
+        return { ok: true };
+      },
+    );
+    const coordinator = createBackgroundCoordinator({
+      chrome: chromeAdapter,
+      delay: vi.fn().mockResolvedValue(undefined),
+      fetch: vi.fn(),
+      normalizeImage: vi.fn(async (dataUrl) => dataUrl),
+    });
+
+    const executing = coordinator.handle({ type: "EXECUTE" });
+    await vi.waitFor(() =>
+      expect(chromeAdapter.sendTabMessage).toHaveBeenCalledWith(
+        7,
+        expect.objectContaining({ type: "RUN_PAGE_AGENT" }),
+      ),
+    );
+    vi.mocked(chromeAdapter.queryActiveTab).mockResolvedValue({
+      id: 9,
+      windowId: 3,
+      url: "https://other.example.test/",
+      title: "Other",
+    });
+    await coordinator.handle({ type: "CANCEL_EXECUTION" });
+    finish?.({ status: "cancelled", values: {}, changedFields: 0 });
+    await executing;
+
+    expect(chromeAdapter.sendTabMessage).toHaveBeenCalledWith(7, {
+      type: "CANCEL_EXECUTION",
+    });
+    expect(chromeAdapter.sendTabMessage).not.toHaveBeenCalledWith(9, {
+      type: "CANCEL_EXECUTION",
+    });
+  });
+
+  it("does not report ready when Page Agent cancellation is unconfirmed", async () => {
+    const chromeAdapter = adapter();
+    await chromeAdapter.setSession(analyzedSession("fill"));
+    let finish:
+      | ((value: {
+          status: "cancelled";
+          values: Record<string, string>;
+          changedFields: number;
+        }) => void)
+      | undefined;
+    vi.mocked(chromeAdapter.sendTabMessage).mockImplementation(
+      async (_tabId, message) => {
+        if (message.type === "DISCOVER_FIELDS") {
+          return fieldManifest();
+        }
+        if (message.type === "RUN_PAGE_AGENT") {
+          return new Promise((resolve) => {
+            finish = resolve;
+          });
+        }
+        if (message.type === "CANCEL_EXECUTION") {
+          return { error: "Page Agent stop failed" };
+        }
+        return { ok: true };
+      },
+    );
+    const coordinator = createBackgroundCoordinator({
+      chrome: chromeAdapter,
+      delay: vi.fn().mockResolvedValue(undefined),
+      fetch: vi.fn(),
+      normalizeImage: vi.fn(async (dataUrl) => dataUrl),
+    });
+
+    const executing = coordinator.handle({ type: "EXECUTE" });
+    await vi.waitFor(() =>
+      expect(chromeAdapter.sendTabMessage).toHaveBeenCalledWith(
+        7,
+        expect.objectContaining({ type: "RUN_PAGE_AGENT" }),
+      ),
+    );
+    await expect(
+      coordinator.handle({ type: "CANCEL_EXECUTION" }),
+    ).rejects.toThrow("stop failed");
+    expect(await chromeAdapter.getSession()).toMatchObject({
+      status: "error",
+      error: "Page Agent stop failed",
+      executionLease: expect.objectContaining({ tabId: 7 }),
+    });
+
+    finish?.({ status: "cancelled", values: {}, changedFields: 0 });
+    await executing;
+  });
+
+  it("blocks shared mutations during a run and makes Clear cancel first", async () => {
+    const chromeAdapter = adapter();
+    await chromeAdapter.setSession(analyzedSession("fill"));
+    let finish:
+      | ((value: {
+          status: "cancelled";
+          values: Record<string, string>;
+          changedFields: number;
+        }) => void)
+      | undefined;
+    vi.mocked(chromeAdapter.sendTabMessage).mockImplementation(
+      async (_tabId, message) => {
+        if (message.type === "DISCOVER_FIELDS") {
+          return fieldManifest();
+        }
+        if (message.type === "RUN_PAGE_AGENT") {
+          return new Promise((resolve) => {
+            finish = resolve;
+          });
+        }
+        if (message.type === "CANCEL_EXECUTION") {
+          return { status: "cancelled" };
+        }
+        return { ok: true };
+      },
+    );
+    const coordinator = createBackgroundCoordinator({
+      chrome: chromeAdapter,
+      delay: vi.fn().mockResolvedValue(undefined),
+      fetch: vi.fn(),
+      normalizeImage: vi.fn(async (dataUrl) => dataUrl),
+    });
+
+    const executing = coordinator.handle({ type: "EXECUTE" });
+    await vi.waitFor(async () => {
+      expect((await chromeAdapter.getSession()).status).toBe("executing");
+    });
+    await expect(
+      coordinator.handle({ type: "SET_MODE", mode: "review" }),
+    ).rejects.toThrow("Cancel or finish");
+    await coordinator.handle({ type: "CLEAR_SESSION" });
+    expect(chromeAdapter.sendTabMessage).toHaveBeenCalledWith(7, {
+      type: "CANCEL_EXECUTION",
+    });
+    expect(await chromeAdapter.getSession()).toEqual(createEmptySession());
+
+    finish?.({ status: "cancelled", values: {}, changedFields: 0 });
+    await executing;
+  });
+
+  it("rejects stale proxy steps after an MV3 worker restart", async () => {
+    const chromeAdapter = adapter();
+    await chromeAdapter.setSession({
+      ...analyzedSession("fill"),
+      status: "executing",
+      executionLease: {
+        executionId: "execution-stale",
+        tabId: 7,
+        windowId: 3,
+        tabUrl: "https://forms.example.test/apply",
+        documentId: "document-original",
+        agentStarted: true,
+      },
+    });
+    const restartedCoordinator = createBackgroundCoordinator({
+      chrome: chromeAdapter,
+      delay: vi.fn().mockResolvedValue(undefined),
+      fetch: vi.fn(),
+      normalizeImage: vi.fn(async (dataUrl) => dataUrl),
+    });
+
+    await expect(
+      restartedCoordinator.handle({
+        type: "FETCH_PAGE_AGENT",
+        body: '{"messages":[]}',
+        executionId: "execution-stale",
+      }),
+    ).rejects.toThrow("no longer active");
+  });
+
+  it("clears a persisted execution lease after its original tab is gone", async () => {
+    const chromeAdapter = adapter();
+    await chromeAdapter.setSession({
+      ...analyzedSession("fill"),
+      status: "executing",
+      executionLease: {
+        executionId: "execution-stale",
+        tabId: 7,
+        windowId: 3,
+        tabUrl: "https://forms.example.test/apply",
+        documentId: "document-original",
+        agentStarted: true,
+      },
+    });
+    vi.mocked(chromeAdapter.sendTabMessage).mockRejectedValue(
+      new Error("No tab with id: 7"),
+    );
+    vi.mocked(chromeAdapter.getTab).mockResolvedValue(null);
+    const restartedCoordinator = createBackgroundCoordinator({
+      chrome: chromeAdapter,
+      delay: vi.fn().mockResolvedValue(undefined),
+      fetch: vi.fn(),
+      normalizeImage: vi.fn(async (dataUrl) => dataUrl),
+    });
+
+    await expect(
+      restartedCoordinator.handle({ type: "CLEAR_SESSION" }),
+    ).resolves.toEqual(createEmptySession());
+    expect(await chromeAdapter.getSession()).toEqual(createEmptySession());
+  });
+
+  it("clears a persisted lease after a same-URL document reload", async () => {
+    const chromeAdapter = adapter();
+    await chromeAdapter.setSession({
+      ...analyzedSession("fill"),
+      status: "executing",
+      executionLease: {
+        executionId: "execution-stale",
+        tabId: 7,
+        windowId: 3,
+        tabUrl: "https://forms.example.test/apply",
+        documentId: "document-original",
+        agentStarted: true,
+      },
+    });
+    vi.mocked(chromeAdapter.sendTabMessage).mockImplementation(
+      async (_tabId, message) => {
+        if (message.type === "DISCOVER_FIELDS") {
+          return fieldManifest("document-reloaded");
+        }
+        return undefined;
+      },
+    );
+    const restartedCoordinator = createBackgroundCoordinator({
+      chrome: chromeAdapter,
+      delay: vi.fn().mockResolvedValue(undefined),
+      fetch: vi.fn(),
+      normalizeImage: vi.fn(async (dataUrl) => dataUrl),
+    });
+
+    await expect(
+      restartedCoordinator.handle({ type: "CLEAR_SESSION" }),
+    ).resolves.toEqual(createEmptySession());
+    expect(await chromeAdapter.getSession()).toEqual(createEmptySession());
+  });
+
+  it("requires an explicit user action before using the exact-map fallback", async () => {
+    const chromeAdapter = adapter();
+    const analyzed = analyzedSession("fill");
+    await chromeAdapter.setSession(analyzed);
+    vi.mocked(chromeAdapter.sendTabMessage).mockImplementation(
+      async (_tabId, message) => {
+        if (message.type === "DISCOVER_FIELDS") {
+          return fieldManifest();
+        }
+        if (message.type === "RUN_PAGE_AGENT") {
+          return { error: "Provider offline" };
+        }
+        if (message.type === "RUN_EXACT_FALLBACK") {
+          return {
+            status: "filled",
+            adapter: "exact-fallback",
+            values: { name: "Jamie Chen" },
+            changedFields: 1,
+            warning: "User approved exact fill.",
+          };
+        }
+        return { ok: true };
+      },
+    );
+    const coordinator = createBackgroundCoordinator({
+      chrome: chromeAdapter,
+      delay: vi.fn().mockResolvedValue(undefined),
+      fetch: vi.fn(),
+      normalizeImage: vi.fn(async (dataUrl) => dataUrl),
+    });
+
+    await expect(coordinator.handle({ type: "EXECUTE" })).rejects.toThrow(
+      "Provider offline",
+    );
+    expect((await chromeAdapter.getSession()).fallbackOffer).toMatchObject({
+      tabId: 7,
+      tabUrl: "https://forms.example.test/apply",
+      strategy: analyzed.strategies[1],
+    });
+    expect(chromeAdapter.sendTabMessage).not.toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ type: "RUN_EXACT_FALLBACK" }),
+    );
+
+    await coordinator.handle({ type: "EXECUTE_EXACT_FALLBACK" });
+
+    expect(chromeAdapter.sendTabMessage).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({
+        type: "RUN_EXACT_FALLBACK",
+        strategy: analyzed.strategies[1],
+        executionId: expect.any(String),
+      }),
+    );
+    expect((await chromeAdapter.getSession()).lastExecution).toMatchObject({
+      adapter: "exact-fallback",
+      changedFields: 1,
+    });
+  });
+
+  it("never records exact fallback success after cancellation", async () => {
+    const chromeAdapter = adapter();
+    const analyzed = analyzedSession("fill");
+    await chromeAdapter.setSession({
+      ...analyzed,
+      fallbackOffer: {
+        ...analyzed.analysisTarget!,
+        strategy: analyzed.strategies[1]!,
+        reason: "Page Agent stopped.",
+      },
+    });
+    let finish:
+      | ((value: {
+          status: "filled";
+          adapter: "exact-fallback";
+          changedFields: number;
+        }) => void)
+      | undefined;
+    vi.mocked(chromeAdapter.sendTabMessage).mockImplementation(
+      async (_tabId, message) => {
+        if (message.type === "DISCOVER_FIELDS") return fieldManifest();
+        if (message.type === "RUN_EXACT_FALLBACK") {
+          return new Promise((resolve) => {
+            finish = resolve;
+          });
+        }
+        if (message.type === "CANCEL_EXECUTION") {
+          return { status: "cancelled" };
+        }
+        return { ok: true };
+      },
+    );
+    const coordinator = createBackgroundCoordinator({
+      chrome: chromeAdapter,
+      delay: vi.fn().mockResolvedValue(undefined),
+      fetch: vi.fn(),
+      normalizeImage: vi.fn(async (dataUrl) => dataUrl),
+    });
+
+    const executing = coordinator.handle({
+      type: "EXECUTE_EXACT_FALLBACK",
+    });
+    await vi.waitFor(() =>
+      expect(chromeAdapter.sendTabMessage).toHaveBeenCalledWith(
+        7,
+        expect.objectContaining({ type: "RUN_EXACT_FALLBACK" }),
+      ),
+    );
+    await coordinator.handle({ type: "CANCEL_EXECUTION" });
+    finish?.({
+      status: "filled",
+      adapter: "exact-fallback",
+      changedFields: 1,
+    });
+
+    await expect(executing).resolves.toMatchObject({ status: "cancelled" });
+    expect((await chromeAdapter.getSession()).lastExecution).toBeNull();
+  });
+
+  it("claims cancellation before its initial session read", async () => {
+    const chromeAdapter = adapter();
+    const analyzed = analyzedSession("fill");
+    await chromeAdapter.setSession({
+      ...analyzed,
+      fallbackOffer: {
+        ...analyzed.analysisTarget!,
+        strategy: analyzed.strategies[1]!,
+        reason: "Page Agent stopped.",
+      },
+    });
+    const baseGetSession = vi
+      .mocked(chromeAdapter.getSession)
+      .getMockImplementation()!;
+    let pauseNextSessionRead = false;
+    let releaseCancellationRead: (() => void) | undefined;
+    vi.mocked(chromeAdapter.getSession).mockImplementation(async () => {
+      if (pauseNextSessionRead) {
+        pauseNextSessionRead = false;
+        await new Promise<void>((resolve) => {
+          releaseCancellationRead = resolve;
+        });
+      }
+      return baseGetSession();
+    });
+    let finish:
+      | ((value: {
+          status: "filled";
+          adapter: "exact-fallback";
+          changedFields: number;
+        }) => void)
+      | undefined;
+    vi.mocked(chromeAdapter.sendTabMessage).mockImplementation(
+      async (_tabId, message) => {
+        if (message.type === "DISCOVER_FIELDS") return fieldManifest();
+        if (message.type === "RUN_EXACT_FALLBACK") {
+          return new Promise((resolve) => {
+            finish = resolve;
+          });
+        }
+        if (message.type === "CANCEL_EXECUTION") {
+          return { status: "cancelled" };
+        }
+        return { ok: true };
+      },
+    );
+    const coordinator = createBackgroundCoordinator({
+      chrome: chromeAdapter,
+      delay: vi.fn().mockResolvedValue(undefined),
+      fetch: vi.fn(),
+      normalizeImage: vi.fn(async (dataUrl) => dataUrl),
+    });
+
+    const executing = coordinator.handle({
+      type: "EXECUTE_EXACT_FALLBACK",
+    });
+    await vi.waitFor(() =>
+      expect(chromeAdapter.sendTabMessage).toHaveBeenCalledWith(
+        7,
+        expect.objectContaining({ type: "RUN_EXACT_FALLBACK" }),
+      ),
+    );
+    pauseNextSessionRead = true;
+    const cancelling = coordinator.handle({ type: "CANCEL_EXECUTION" });
+    await vi.waitFor(() => expect(releaseCancellationRead).toBeTypeOf("function"));
+    finish?.({
+      status: "filled",
+      adapter: "exact-fallback",
+      changedFields: 1,
+    });
+
+    await expect(executing).resolves.toMatchObject({ status: "cancelled" });
+    expect((await chromeAdapter.getSession()).lastExecution).toBeNull();
+    releaseCancellationRead?.();
+    await cancelling;
+    expect(chromeAdapter.sendTabMessage).toHaveBeenCalledWith(7, {
+      type: "CANCEL_EXECUTION",
+    });
+    expect((await chromeAdapter.getSession()).lastExecution).toBeNull();
+  });
+
+  it("revalidates cancellation after a paused success-path session read", async () => {
+    const chromeAdapter = adapter();
+    const analyzed = analyzedSession("fill");
+    await chromeAdapter.setSession({
+      ...analyzed,
+      fallbackOffer: {
+        ...analyzed.analysisTarget!,
+        strategy: analyzed.strategies[1]!,
+        reason: "Page Agent stopped.",
+      },
+    });
+    const baseGetSession = vi
+      .mocked(chromeAdapter.getSession)
+      .getMockImplementation()!;
+    let pauseNextSessionRead = false;
+    let releaseSuccessRead: (() => void) | undefined;
+    vi.mocked(chromeAdapter.getSession).mockImplementation(async () => {
+      if (pauseNextSessionRead) {
+        pauseNextSessionRead = false;
+        await new Promise<void>((resolve) => {
+          releaseSuccessRead = resolve;
+        });
+      }
+      return baseGetSession();
+    });
+    let finish:
+      | ((value: {
+          status: "filled";
+          adapter: "exact-fallback";
+          changedFields: number;
+        }) => void)
+      | undefined;
+    vi.mocked(chromeAdapter.sendTabMessage).mockImplementation(
+      async (_tabId, message) => {
+        if (message.type === "DISCOVER_FIELDS") return fieldManifest();
+        if (message.type === "RUN_EXACT_FALLBACK") {
+          return new Promise((resolve) => {
+            finish = resolve;
+          });
+        }
+        if (message.type === "CANCEL_EXECUTION") {
+          return { status: "cancelled" };
+        }
+        return { ok: true };
+      },
+    );
+    const coordinator = createBackgroundCoordinator({
+      chrome: chromeAdapter,
+      delay: vi.fn().mockResolvedValue(undefined),
+      fetch: vi.fn(),
+      normalizeImage: vi.fn(async (dataUrl) => dataUrl),
+    });
+
+    const executing = coordinator.handle({
+      type: "EXECUTE_EXACT_FALLBACK",
+    });
+    await vi.waitFor(() =>
+      expect(chromeAdapter.sendTabMessage).toHaveBeenCalledWith(
+        7,
+        expect.objectContaining({ type: "RUN_EXACT_FALLBACK" }),
+      ),
+    );
+    pauseNextSessionRead = true;
+    finish?.({
+      status: "filled",
+      adapter: "exact-fallback",
+      changedFields: 1,
+    });
+    await vi.waitFor(() => expect(releaseSuccessRead).toBeTypeOf("function"));
+
+    await coordinator.handle({ type: "CANCEL_EXECUTION" });
+    expect((await chromeAdapter.getSession()).lastExecution).toBeNull();
+    releaseSuccessRead?.();
+
+    await expect(executing).resolves.toMatchObject({ status: "cancelled" });
+    expect((await chromeAdapter.getSession()).lastExecution).toBeNull();
+  });
+
+  it("keeps the execution lease until delayed Clear confirms rollback", async () => {
+    const chromeAdapter = adapter();
+    const analyzed = analyzedSession("fill");
+    await chromeAdapter.setSession({
+      ...analyzed,
+      fallbackOffer: {
+        ...analyzed.analysisTarget!,
+        strategy: analyzed.strategies[1]!,
+        reason: "Page Agent stopped.",
+      },
+    });
+    const baseGetSession = vi
+      .mocked(chromeAdapter.getSession)
+      .getMockImplementation()!;
+    let pauseNextSessionRead = false;
+    let releaseClearRead: (() => void) | undefined;
+    vi.mocked(chromeAdapter.getSession).mockImplementation(async () => {
+      if (pauseNextSessionRead) {
+        pauseNextSessionRead = false;
+        await new Promise<void>((resolve) => {
+          releaseClearRead = resolve;
+        });
+      }
+      return baseGetSession();
+    });
+    let finish:
+      | ((value: {
+          status: "filled";
+          adapter: "exact-fallback";
+          changedFields: number;
+        }) => void)
+      | undefined;
+    vi.mocked(chromeAdapter.sendTabMessage).mockImplementation(
+      async (_tabId, message) => {
+        if (message.type === "DISCOVER_FIELDS") return fieldManifest();
+        if (message.type === "RUN_EXACT_FALLBACK") {
+          return new Promise((resolve) => {
+            finish = resolve;
+          });
+        }
+        if (message.type === "CANCEL_EXECUTION") {
+          return { status: "cancelled" };
+        }
+        return { ok: true };
+      },
+    );
+    const coordinator = createBackgroundCoordinator({
+      chrome: chromeAdapter,
+      delay: vi.fn().mockResolvedValue(undefined),
+      fetch: vi.fn(),
+      normalizeImage: vi.fn(async (dataUrl) => dataUrl),
+    });
+
+    const executing = coordinator.handle({
+      type: "EXECUTE_EXACT_FALLBACK",
+    });
+    await vi.waitFor(() =>
+      expect(chromeAdapter.sendTabMessage).toHaveBeenCalledWith(
+        7,
+        expect.objectContaining({ type: "RUN_EXACT_FALLBACK" }),
+      ),
+    );
+    pauseNextSessionRead = true;
+    const clearing = coordinator.handle({ type: "CLEAR_SESSION" });
+    await vi.waitFor(() => expect(releaseClearRead).toBeTypeOf("function"));
+    finish?.({
+      status: "filled",
+      adapter: "exact-fallback",
+      changedFields: 1,
+    });
+
+    await expect(executing).resolves.toMatchObject({ status: "cancelled" });
+    expect((await chromeAdapter.getSession()).executionLease).not.toBeNull();
+    releaseClearRead?.();
+    await clearing;
+    expect(chromeAdapter.sendTabMessage).toHaveBeenCalledWith(7, {
+      type: "CANCEL_EXECUTION",
+    });
+    expect(await chromeAdapter.getSession()).toEqual(createEmptySession());
+  });
+
+  it("retains Undo until the original document acknowledges restoration", async () => {
+    const chromeAdapter = adapter();
+    await chromeAdapter.setSession(analyzedSession("fill"));
+    let undoConfirmed = false;
+    vi.mocked(chromeAdapter.sendTabMessage).mockImplementation(
+      async (_tabId, message) => {
+        if (message.type === "DISCOVER_FIELDS") {
+          return fieldManifest();
+        }
+        if (message.type === "RUN_PAGE_AGENT") {
+          return {
+            status: "filled",
+            adapter: "page-agent",
+            changedFields: 1,
+          };
+        }
+        if (message.type === "RUN_UNDO") {
+          return undoConfirmed ? { status: "undone" } : undefined;
+        }
+        return { ok: true };
+      },
+    );
+    const coordinator = createBackgroundCoordinator({
+      chrome: chromeAdapter,
+      delay: vi.fn().mockResolvedValue(undefined),
+      fetch: vi.fn(),
+      normalizeImage: vi.fn(async (dataUrl) => dataUrl),
+    });
+    await coordinator.handle({ type: "EXECUTE" });
+
+    await expect(coordinator.handle({ type: "UNDO" })).rejects.toThrow(
+      "confirm Undo",
+    );
+    expect((await chromeAdapter.getSession()).lastExecution).not.toBeNull();
+
+    undoConfirmed = true;
+    await coordinator.handle({ type: "UNDO" });
+    expect((await chromeAdapter.getSession()).lastExecution).toBeNull();
   });
 });

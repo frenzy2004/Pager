@@ -1,15 +1,20 @@
 import type {
+  AnalysisTarget,
   CaptureItem,
   ConnectorMessage,
   ConnectorSession,
   ExecutionMode,
+  ExecutionLease,
   ExecutionSummary,
+  FallbackOffer,
   Preset,
   Strategy,
 } from "./protocol";
+import { MAX_SCREENSHOT_DATA_URL_LENGTH } from "../../../src/lib/mochi/image-limits";
 
 export const MAX_CAPTURES = 8;
-export const MAX_CAPTURE_DATA_URL_LENGTH = 850_000;
+export const MAX_CAPTURE_DATA_URL_LENGTH =
+  MAX_SCREENSHOT_DATA_URL_LENGTH;
 
 export type SessionAction =
   | { type: "capture-added"; capture: CaptureItem }
@@ -17,17 +22,23 @@ export type SessionAction =
   | { type: "preset-changed"; preset: Preset }
   | { type: "task-hint-changed"; taskHint: string }
   | { type: "analysis-started" }
-  | { type: "analysis-succeeded"; strategies: Strategy[] }
+  | {
+      type: "analysis-succeeded";
+      strategies: Strategy[];
+      target: AnalysisTarget;
+    }
   | { type: "strategy-selected"; strategyId: Strategy["id"] }
   | { type: "mode-changed"; mode: ExecutionMode }
-  | { type: "execution-started" }
+  | { type: "execution-started"; lease: ExecutionLease }
   | { type: "execution-succeeded"; summary: ExecutionSummary }
+  | { type: "fallback-offered"; offer: FallbackOffer }
   | { type: "failed"; error: string }
   | { type: "cleared" };
 
 export function createEmptySession(): ConnectorSession {
   return {
     captures: [],
+    captureLease: null,
     preset: "general",
     taskHint: "",
     strategies: [],
@@ -36,6 +47,9 @@ export function createEmptySession(): ConnectorSession {
     status: "idle",
     error: null,
     lastExecution: null,
+    fallbackOffer: null,
+    analysisTarget: null,
+    executionLease: null,
     executionCountdown: null,
   };
 }
@@ -48,9 +62,17 @@ export function reduceSession(
     case "capture-added":
       return {
         ...state,
-        captures: [...state.captures, action.capture].slice(-MAX_CAPTURES),
+        captures:
+          state.captures.length >= MAX_CAPTURES
+            ? state.captures
+            : [...state.captures, action.capture],
+        captureLease: null,
         error: null,
-        status: state.strategies.length > 0 ? "ready" : "idle",
+        fallbackOffer: null,
+        analysisTarget: null,
+        strategies: [],
+        selectedStrategyId: null,
+        status: "idle",
       };
     case "capture-removed":
       return {
@@ -58,13 +80,42 @@ export function reduceSession(
         captures: state.captures.filter(
           ({ id }) => id !== action.captureId,
         ),
+        fallbackOffer: null,
+        analysisTarget: null,
+        strategies: [],
+        selectedStrategyId: null,
+        status: "idle",
       };
     case "preset-changed":
-      return { ...state, preset: action.preset };
+      return {
+        ...state,
+        preset: action.preset,
+        strategies: [],
+        selectedStrategyId: null,
+        fallbackOffer: null,
+        analysisTarget: null,
+        status: "idle",
+      };
     case "task-hint-changed":
-      return { ...state, taskHint: action.taskHint.slice(0, 800) };
+      return {
+        ...state,
+        taskHint: action.taskHint.slice(0, 800),
+        strategies: [],
+        selectedStrategyId: null,
+        fallbackOffer: null,
+        analysisTarget: null,
+        status: "idle",
+      };
     case "analysis-started":
-      return { ...state, error: null, status: "analyzing" };
+      return {
+        ...state,
+        error: null,
+        fallbackOffer: null,
+        strategies: [],
+        selectedStrategyId: null,
+        analysisTarget: null,
+        status: "analyzing",
+      };
     case "analysis-succeeded":
       return {
         ...state,
@@ -74,18 +125,30 @@ export function reduceSession(
           action.strategies[0]?.id ??
           null,
         error: null,
+        fallbackOffer: null,
+        analysisTarget: action.target,
         status: "ready",
       };
     case "strategy-selected":
       return state.strategies.some(({ id }) => id === action.strategyId)
-        ? { ...state, selectedStrategyId: action.strategyId }
+        ? {
+            ...state,
+            selectedStrategyId: action.strategyId,
+            fallbackOffer: null,
+          }
         : state;
     case "mode-changed":
-      return { ...state, executionMode: action.mode };
+      return {
+        ...state,
+        executionMode: action.mode,
+        fallbackOffer: null,
+      };
     case "execution-started":
       return {
         ...state,
         error: null,
+        fallbackOffer: null,
+        executionLease: action.lease,
         executionCountdown: null,
         status: "executing",
       };
@@ -93,6 +156,17 @@ export function reduceSession(
       return {
         ...state,
         lastExecution: action.summary,
+        fallbackOffer: null,
+        executionLease: null,
+        error: null,
+        executionCountdown: null,
+        status: "ready",
+      };
+    case "fallback-offered":
+      return {
+        ...state,
+        fallbackOffer: action.offer,
+        executionLease: null,
         executionCountdown: null,
         status: "ready",
       };
@@ -100,6 +174,8 @@ export function reduceSession(
       return {
         ...state,
         error: action.error,
+        captureLease: null,
+        executionLease: null,
         executionCountdown: null,
         status: "error",
       };
@@ -163,10 +239,12 @@ export function parseConnectorMessage(value: unknown): ConnectorMessage | null {
     "CLEAR_SESSION",
     "ANALYZE",
     "EXECUTE",
+    "EXECUTE_EXACT_FALLBACK",
     "CANCEL_EXECUTION",
     "UNDO",
     "HIDE_PET",
     "SHOW_PET",
+    "CANCEL_SNIP",
     "DISCOVER_FIELDS",
   ]);
 
@@ -206,9 +284,36 @@ export function parseConnectorMessage(value: unknown): ConnectorMessage | null {
   if (
     value.type === "FETCH_PAGE_AGENT" &&
     typeof value.body === "string" &&
-    value.body.length <= 1_000_000
+    value.body.length <= 250_000 &&
+    typeof value.executionId === "string" &&
+    /^[A-Za-z0-9_-]{8,120}$/.test(value.executionId)
   ) {
-    return { type: value.type, body: value.body };
+    return {
+      type: value.type,
+      body: value.body,
+      executionId: value.executionId,
+    };
+  }
+
+  if (
+    (value.type === "RELEASE_EXECUTION_GUARD" ||
+      value.type === "AUTHORIZE_SUBMIT") &&
+    typeof value.executionId === "string" &&
+    /^[A-Za-z0-9_-]{8,120}$/.test(value.executionId) &&
+    (value.type === "RELEASE_EXECUTION_GUARD" ||
+      (typeof value.documentId === "string" &&
+        /^[A-Za-z0-9_-]{8,120}$/.test(value.documentId)))
+  ) {
+    return value.type === "RELEASE_EXECUTION_GUARD"
+      ? {
+          type: value.type,
+          executionId: value.executionId,
+        }
+      : {
+          type: value.type,
+          executionId: value.executionId,
+          documentId: value.documentId as string,
+        };
   }
 
   return null;

@@ -93,7 +93,23 @@ const mockAnalysis = {
 };
 
 test.beforeEach(async ({ page }) => {
+  await page.route("**/api/connector/session", async (route) => {
+    expect(route.request().headers()["x-mochi-client-id"]).toBe(
+      "abcdefghijklmnopabcdefghijklmnop",
+    );
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        token: "e2e-web-session-token",
+        expiresAt: Date.now() + 15 * 60_000,
+      }),
+    });
+  });
   await page.route("**/api/analyze", async (route) => {
+    expect(route.request().headers().authorization).toBe(
+      "Bearer e2e-web-session-token",
+    );
     await route.fulfill({
       status: 200,
       contentType: "application/json",

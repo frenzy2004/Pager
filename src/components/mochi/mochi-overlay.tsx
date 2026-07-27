@@ -17,7 +17,11 @@ import { ModeSwitcher } from "@/components/mochi/mode-switcher";
 import { MochiFace } from "@/components/mochi/mochi-face";
 import { MochiPet } from "@/components/mochi/mochi-pet";
 import { StrategyPicker } from "@/components/mochi/strategy-picker";
-import { validateScreenshot } from "@/lib/mochi/files";
+import {
+  normalizeScreenshotFile,
+  validateScreenshot,
+} from "@/lib/mochi/files";
+import { fetchWithMochiSession } from "@/lib/mochi/browser-session";
 import type {
   AnalysisResult,
   ExecutionMode,
@@ -46,15 +50,6 @@ interface MochiOverlayProps {
   onCancel?: () => void;
   onUndo(): void;
   canUndo: boolean;
-}
-
-function fileToDataUrl(file: File) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error("Could not read that screenshot."));
-    reader.onload = () => resolve(String(reader.result));
-    reader.readAsDataURL(file);
-  });
 }
 
 function createSampleContext() {
@@ -171,7 +166,7 @@ export function MochiOverlay({
           next.push({
             id: `${file.name}-${file.lastModified}-${crypto.randomUUID?.() ?? Date.now()}`,
             name: file.name,
-            dataUrl: await fileToDataUrl(file),
+            dataUrl: await normalizeScreenshotFile(file),
           });
         } catch (fileError) {
           setError(
@@ -229,7 +224,7 @@ export function MochiOverlay({
     }, 700);
 
     try {
-      const response = await fetch("/api/analyze", {
+      const response = await fetchWithMochiSession("/api/analyze", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({

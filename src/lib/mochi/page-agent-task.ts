@@ -4,6 +4,9 @@ export interface PageAgentTaskStrategy {
   fields: Record<string, { value: string }>;
 }
 
+export const PAGE_AGENT_SYSTEM_INSTRUCTIONS =
+  "Act only on the current top-level form. Use the exact provided values and never click buttons; Mochi enforces submission separately. Never guess personal facts or touch credentials, payment, uploads, OTP, or CAPTCHA.";
+
 export function strategyValues(strategy: PageAgentTaskStrategy) {
   return Object.fromEntries(
     Object.entries(strategy.fields)
@@ -19,7 +22,7 @@ export function buildPageAgentTask(
   const values = strategyValues(strategy);
   const submitInstruction =
     mode === "autopilot"
-      ? "After verifying every filled value, submit exactly once. Stop immediately after that one submit."
+      ? "Do not click or submit. Mochi will validate your filled values and invoke one form submission outside the agent."
       : "Do not submit the form, click a final confirmation, or navigate away.";
 
   return [

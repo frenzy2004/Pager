@@ -17,6 +17,12 @@ export interface CaptureItem {
   kind: "viewport" | "region";
 }
 
+export interface CaptureLease {
+  operationId: string;
+  tabId: number;
+  kind: "viewport" | "region";
+}
+
 export interface FieldSuggestion {
   value: string;
   status: "supported" | "researched" | "draft" | "needs-input";
@@ -42,12 +48,47 @@ export interface Strategy {
 
 export interface ExecutionSummary {
   tabId: number;
+  windowId: number;
+  tabUrl: string;
+  documentId: string;
+  fieldManifestKey: string;
   changedFields: number;
   completedAt: string;
+  adapter: "page-agent" | "exact-fallback";
+  status: "filled" | "submitted";
+  warning?: string;
+}
+
+export interface ExecutionLease {
+  executionId: string;
+  tabId: number;
+  windowId: number;
+  tabUrl: string;
+  documentId: string;
+  agentStarted: boolean;
+}
+
+export interface AnalysisTarget {
+  tabId: number;
+  windowId: number;
+  tabUrl: string;
+  documentId: string;
+  fieldManifestKey: string;
+}
+
+export interface FallbackOffer {
+  tabId: number;
+  windowId: number;
+  tabUrl: string;
+  documentId: string;
+  fieldManifestKey: string;
+  strategy: Strategy;
+  reason: string;
 }
 
 export interface ConnectorSession {
   captures: CaptureItem[];
+  captureLease: CaptureLease | null;
   preset: Preset;
   taskHint: string;
   strategies: Strategy[];
@@ -56,6 +97,9 @@ export interface ConnectorSession {
   status: ConnectorStatus;
   error: string | null;
   lastExecution: ExecutionSummary | null;
+  fallbackOffer: FallbackOffer | null;
+  analysisTarget: AnalysisTarget | null;
+  executionLease: ExecutionLease | null;
   executionCountdown: number | null;
 }
 
@@ -72,14 +116,35 @@ export type ConnectorMessage =
   | { type: "SELECT_STRATEGY"; strategyId: Strategy["id"] }
   | { type: "SET_MODE"; mode: ExecutionMode }
   | { type: "EXECUTE" }
+  | { type: "EXECUTE_EXACT_FALLBACK" }
   | { type: "CANCEL_EXECUTION" }
   | { type: "UNDO" }
+  | { type: "RUN_UNDO"; documentId: string }
   | { type: "HIDE_PET" }
   | { type: "SHOW_PET" }
+  | { type: "CANCEL_SNIP" }
   | { type: "BEGIN_FROZEN_SNIP"; dataUrl: string }
   | { type: "DISCOVER_FIELDS" }
-  | { type: "RUN_PAGE_AGENT"; strategy: Strategy; mode: ExecutionMode }
-  | { type: "FETCH_PAGE_AGENT"; body: string }
+  | {
+      type: "RUN_PAGE_AGENT";
+      strategy: Strategy;
+      mode: ExecutionMode;
+      executionId: string;
+      documentId: string;
+    }
+  | {
+      type: "RUN_EXACT_FALLBACK";
+      strategy: Strategy;
+      executionId: string;
+      documentId: string;
+    }
+  | { type: "FETCH_PAGE_AGENT"; body: string; executionId: string }
+  | {
+      type: "AUTHORIZE_SUBMIT";
+      executionId: string;
+      documentId: string;
+    }
+  | { type: "RELEASE_EXECUTION_GUARD"; executionId: string }
   | { type: "SESSION_UPDATED"; session: ConnectorSession };
 
 export interface PageAgentFetchResponse {

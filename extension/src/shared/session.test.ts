@@ -5,7 +5,11 @@ import {
   parseConnectorMessage,
   reduceSession,
 } from "./session";
-import type { CaptureItem, Strategy } from "./protocol";
+import type {
+  AnalysisTarget,
+  CaptureItem,
+  Strategy,
+} from "./protocol";
 
 function capture(index: number): CaptureItem {
   return {
@@ -50,11 +54,19 @@ const strategies: Strategy[] = [
     sources: [],
   },
 ];
+const analysisTarget: AnalysisTarget = {
+  tabId: 7,
+  windowId: 3,
+  tabUrl: "https://forms.example.test/apply",
+  documentId: "document-original",
+  fieldManifestKey: "[]",
+};
 
 describe("connector session", () => {
   it("starts safe and empty", () => {
     expect(createEmptySession()).toEqual({
       captures: [],
+      captureLease: null,
       preset: "general",
       taskHint: "",
       strategies: [],
@@ -63,11 +75,14 @@ describe("connector session", () => {
       status: "idle",
       error: null,
       lastExecution: null,
+      fallbackOffer: null,
+      analysisTarget: null,
+      executionLease: null,
       executionCountdown: null,
     });
   });
 
-  it("keeps the newest eight captures and removes selected captures", () => {
+  it("keeps the first eight captures until the user removes one", () => {
     let state = createEmptySession();
 
     for (let index = 0; index < 9; index += 1) {
@@ -78,6 +93,7 @@ describe("connector session", () => {
     }
 
     expect(state.captures.map(({ id }) => id)).toEqual([
+      "capture-0",
       "capture-1",
       "capture-2",
       "capture-3",
@@ -85,7 +101,6 @@ describe("connector session", () => {
       "capture-5",
       "capture-6",
       "capture-7",
-      "capture-8",
     ]);
 
     state = reduceSession(state, {
@@ -99,6 +114,7 @@ describe("connector session", () => {
     let state = reduceSession(createEmptySession(), {
       type: "analysis-succeeded",
       strategies,
+      target: analysisTarget,
     });
 
     expect(state.selectedStrategyId).toBe("balanced");
@@ -116,9 +132,10 @@ describe("connector session", () => {
     });
 
     expect(state).toMatchObject({
-      selectedStrategyId: "safe",
+      selectedStrategyId: null,
       executionMode: "fill",
       preset: "lead",
+      strategies: [],
       status: "error",
       error: "The active page is unsupported.",
     });
@@ -150,5 +167,47 @@ describe("connector session", () => {
     ).toBeNull();
     expect(parseConnectorMessage({ type: "UNKNOWN" })).toBeNull();
     expect(parseConnectorMessage(null)).toBeNull();
+  });
+
+  it("invalidates exact-fill approval whenever its reviewed context changes", () => {
+    const offer = {
+      tabId: 7,
+      windowId: 3,
+      tabUrl: "https://forms.example.test/apply",
+      documentId: "document-original",
+      fieldManifestKey: "[]",
+      strategy: strategies[1]!,
+      reason: "Provider offline",
+    };
+    const ready = reduceSession(
+      reduceSession(createEmptySession(), {
+        type: "analysis-succeeded",
+        strategies,
+        target: analysisTarget,
+      }),
+      { type: "fallback-offered", offer },
+    );
+
+    expect(
+      reduceSession(ready, {
+        type: "strategy-selected",
+        strategyId: "safe",
+      }).fallbackOffer,
+    ).toBeNull();
+    expect(
+      reduceSession(ready, {
+        type: "task-hint-changed",
+        taskHint: "Use another source",
+      }).fallbackOffer,
+    ).toBeNull();
+    expect(
+      reduceSession(ready, {
+        type: "capture-added",
+        capture: capture(1),
+      }).fallbackOffer,
+    ).toBeNull();
+    expect(
+      reduceSession(ready, { type: "analysis-started" }).fallbackOffer,
+    ).toBeNull();
   });
 });

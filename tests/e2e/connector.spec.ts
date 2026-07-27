@@ -101,9 +101,10 @@ async function readSession(worker: Worker) {
 test("connector follows tabs, captures repeatedly, snips, fills with Page Agent, and undoes", async ({
   }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium");
-  test.setTimeout(120_000);
+  test.setTimeout(180_000);
 
   let pageAgentCalls = 0;
+  let connectorSessionCalls = 0;
   let observedInputTool = false;
   const context = await chromium.launchPersistentContext("", {
     channel: "chromium",
@@ -117,8 +118,49 @@ test("connector follows tabs, captures repeatedly, snips, fills with Page Agent,
 
   try {
     await context.route(
+      "https://mochi-overlay.vercel.app/api/connector/session",
+      async (route) => {
+        connectorSessionCalls += 1;
+        expect(route.request().headers()["x-mochi-extension-id"]).toBe(
+          "fljecmlbnknpeehjcffenmjjnenmkjea",
+        );
+        const requestBody = route.request().postDataJSON() as {
+          challengeToken?: string;
+          solution?: string;
+        };
+        if (connectorSessionCalls === 1) {
+          await route.fulfill({
+            status: 428,
+            contentType: "application/json",
+            body: JSON.stringify({
+              challengeToken:
+                "e2e-proof-challenge-token-with-at-least-forty-characters",
+              difficulty: 8,
+              expiresAt: Date.now() + 60_000,
+            }),
+          });
+          return;
+        }
+        expect(requestBody.challengeToken).toBe(
+          "e2e-proof-challenge-token-with-at-least-forty-characters",
+        );
+        expect(requestBody.solution).toMatch(/^\d+$/);
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            token: "e2e-signed-connector-token",
+            expiresAt: Date.now() + 15 * 60_000,
+          }),
+        });
+      },
+    );
+    await context.route(
       "https://mochi-overlay.vercel.app/api/analyze",
       async (route) => {
+        expect(route.request().headers().authorization).toBe(
+          "Bearer e2e-signed-connector-token",
+        );
         await route.fulfill({
           status: 200,
           contentType: "application/json",
@@ -135,11 +177,28 @@ test("connector follows tabs, captures repeatedly, snips, fills with Page Agent,
     await context.route(
       "https://mochi-overlay.vercel.app/api/page-agent/chat/completions",
       async (route) => {
+        expect(route.request().headers().authorization).toBe(
+          "Bearer e2e-signed-connector-token",
+        );
         pageAgentCalls += 1;
         const body = route.request().postDataJSON() as {
-          messages: Array<{ content?: string | null }>;
+          messages: Array<{ role?: string; content?: string | null }>;
           tools: Array<{ function?: { name?: string } }>;
+          tool_choice?: {
+            type?: string;
+            function?: { name?: string };
+          };
         };
+        expect(body.messages.map(({ role }) => role)).toEqual([
+          "system",
+          "user",
+        ]);
+        expect(body.tools).toHaveLength(1);
+        expect(body.tools[0]?.function?.name).toBe("AgentOutput");
+        expect(body.tool_choice).toEqual({
+          type: "function",
+          function: { name: "AgentOutput" },
+        });
         observedInputTool ||=
           JSON.stringify(body.tools).includes('"input_text"');
         const browserState = body.messages
@@ -213,6 +272,7 @@ test("connector follows tabs, captures repeatedly, snips, fills with Page Agent,
 
     const worker = await extensionWorker(context);
     const extensionId = new URL(worker.url()).host;
+    expect(extensionId).toBe("fljecmlbnknpeehjcffenmjjnenmkjea");
     const panel = await context.newPage();
     await panel.goto(`chrome-extension://${extensionId}/sidepanel.html`);
     const profilePage = await context.newPage();
@@ -236,7 +296,14 @@ test("connector follows tabs, captures repeatedly, snips, fills with Page Agent,
     await formPage.bringToFront();
     await send(panel, { type: "CAPTURE_VIEWPORT" });
 
-    const snip = send(panel, { type: "START_SNIP" });
+    let snipFailure: unknown;
+    const snip = send(panel, { type: "START_SNIP" }).catch((error) => {
+      snipFailure = error;
+      return null;
+    });
+    await formPage.waitForFunction(
+      () => Boolean(document.querySelector("[data-mochi-snip-overlay]")),
+    );
     const frozen = formPage.locator("[data-mochi-snip-overlay]");
     await expect(frozen).toBeVisible();
     await formPage.mouse.move(100, 120);
@@ -244,6 +311,7 @@ test("connector follows tabs, captures repeatedly, snips, fills with Page Agent,
     await formPage.mouse.move(560, 420, { steps: 8 });
     await formPage.mouse.up();
     await snip;
+    if (snipFailure) throw snipFailure;
 
     await expect.poll(async () => (await readSession(worker)).captures.length).toBe(3);
     await expect(panel.getByText("3 / 8", { exact: true })).toBeVisible();
@@ -259,7 +327,9 @@ test("connector follows tabs, captures repeatedly, snips, fills with Page Agent,
     await send(panel, { type: "SET_MODE", mode: "fill" });
     await send(panel, { type: "EXECUTE" });
 
+    await expect(formPage).toHaveURL(/form-a\.html$/);
     await expect(formPage.locator("[name=name]")).toHaveValue("Jamie Chen");
+    expect(connectorSessionCalls).toBe(2);
     expect(pageAgentCalls).toBeGreaterThanOrEqual(2);
     expect(observedInputTool).toBe(true);
     await expect(

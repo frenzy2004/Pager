@@ -23,8 +23,8 @@ export function fitImageWithin(
 }
 
 export function selectCaptureQuality(dataUrlLength: number) {
-  if (dataUrlLength <= 500_000) return 0.82;
-  if (dataUrlLength <= 750_000) return 0.68;
+  if (dataUrlLength <= 220_000) return 0.82;
+  if (dataUrlLength <= 320_000) return 0.68;
   if (dataUrlLength <= MAX_CAPTURE_DATA_URL_LENGTH) return 0.54;
   return 0.42;
 }

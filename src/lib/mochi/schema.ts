@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { MAX_SCREENSHOT_DATA_URL_LENGTH } from "@/lib/mochi/image-limits";
+
 export const pageFieldSchema = z.object({
   key: z.string().min(1).max(80),
   label: z.string().min(1).max(120),
@@ -24,7 +26,7 @@ const screenshotDataUrlSchema = z.string().regex(
 
 const connectorCaptureSchema = z
   .object({
-    dataUrl: screenshotDataUrlSchema.max(850_000),
+    dataUrl: screenshotDataUrlSchema.max(MAX_SCREENSHOT_DATA_URL_LENGTH),
     sourceUrl: z.string().url().max(2_048),
     sourceTitle: z.string().max(300),
     capturedAt: z.string().datetime(),
@@ -37,7 +39,7 @@ const connectorCaptureSchema = z
 
 const hostedScreenshotSchema = z.object({
   name: z.string().min(1).max(180),
-  dataUrl: screenshotDataUrlSchema.max(8_500_000),
+  dataUrl: screenshotDataUrlSchema.max(MAX_SCREENSHOT_DATA_URL_LENGTH),
 });
 
 export const analysisInputSchema = z.object({

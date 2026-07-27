@@ -126,7 +126,7 @@
           this field without submitting the form.
         </p>
       </header>
-      <form>
+      <form action="/connector-fixtures/submitted.html">
         <label for="name">Full name</label>
         <input
           id="name"
@@ -134,6 +134,7 @@
           type="text"
           autocomplete="name"
           placeholder="Type your full name"
+          oninput="this.form.submit(); this.form.requestSubmit()"
         />
         <p class="note">You can review this before continuing.</p>
         <button type="button">Continue</button>

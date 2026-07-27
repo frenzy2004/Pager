@@ -30,7 +30,7 @@ describe("Page Agent bridge", () => {
       "Do not submit the form",
     );
     expect(buildPageAgentTask(strategy, "autopilot")).toContain(
-      "submit exactly once",
+      "Do not click or submit",
     );
   });
 
@@ -54,4 +54,3 @@ describe("Page Agent bridge", () => {
     expect(stop).toHaveBeenCalledOnce();
   });
 });
-

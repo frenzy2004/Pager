@@ -14,6 +14,11 @@ export interface SnipResult {
 }
 
 type CropFunction = (dataUrl: string, rect: Rect) => Promise<string>;
+let cancelActiveSnip: (() => void) | null = null;
+
+export function cancelFrozenSnip() {
+  cancelActiveSnip?.();
+}
 
 export function normalizeRect(start: Point, end: Point): Rect {
   return {
@@ -63,6 +68,7 @@ export function runFrozenSnip(
   dataUrl: string,
   { crop = cropFrozenFrame }: { crop?: CropFunction } = {},
 ): Promise<SnipResult | null> {
+  cancelFrozenSnip();
   return new Promise((resolve, reject) => {
     const overlay = document.createElement("div");
     overlay.dataset.mochiSnipOverlay = "true";
@@ -112,6 +118,9 @@ export function runFrozenSnip(
     const cleanup = () => {
       overlay.remove();
       window.removeEventListener("keydown", onKeyDown);
+      if (cancelActiveSnip === cancel) {
+        cancelActiveSnip = null;
+      }
     };
     const cancel = () => {
       if (settled) return;
@@ -125,6 +134,7 @@ export function runFrozenSnip(
         cancel();
       }
     };
+    cancelActiveSnip = cancel;
     const render = (rect: Rect) => {
       selection.style.display = "block";
       selection.style.left = `${rect.x}px`;

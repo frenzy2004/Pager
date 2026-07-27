@@ -1,7 +1,7 @@
 import type { ConnectorMessage } from "../shared/protocol";
 import { discoverSafeFields } from "./fields";
 import { mountMochiPet } from "./pet";
-import { runFrozenSnip } from "./snip";
+import { cancelFrozenSnip, runFrozenSnip } from "./snip";
 
 type MessageListener = (
   message: unknown,
@@ -16,13 +16,18 @@ export interface ContentRuntime {
 
 interface InstallContentScriptOptions {
   document: Document;
+  documentId?: string;
   runtime: ContentRuntime;
 }
 
 export function installContentScript({
   document: pageDocument,
+  documentId = crypto.randomUUID(),
   runtime,
 }: InstallContentScriptOptions) {
+  if (pageDocument.defaultView) {
+    pageDocument.defaultView.__mochiDocumentId = documentId;
+  }
   const pet = mountMochiPet(pageDocument, () => {
     void runtime.sendMessage({ type: "OPEN_PANEL" });
   });
@@ -46,8 +51,16 @@ export function installContentScript({
       sendResponse({ ok: true });
       return;
     }
+    if (message.type === "CANCEL_SNIP") {
+      cancelFrozenSnip();
+      sendResponse({ status: "cancelled" });
+      return;
+    }
     if (message.type === "DISCOVER_FIELDS") {
-      sendResponse({ fields: discoverSafeFields(pageDocument) });
+      sendResponse({
+        documentId,
+        fields: discoverSafeFields(pageDocument),
+      });
       return;
     }
     if (
@@ -70,6 +83,12 @@ export function installContentScript({
   });
 
   return pet;
+}
+
+declare global {
+  interface Window {
+    __mochiDocumentId?: string;
+  }
 }
 
 if (typeof chrome !== "undefined" && chrome.runtime?.id) {

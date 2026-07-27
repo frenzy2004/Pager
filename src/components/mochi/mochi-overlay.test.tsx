@@ -66,6 +66,25 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+function mockAuthorizedAnalysis() {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    if (url.includes("/api/connector/session")) {
+      return new Response(
+        JSON.stringify({
+          token: "test-web-session",
+          expiresAt: Date.now() + 15 * 60_000,
+        }),
+        { status: 200 },
+      );
+    }
+    return new Response(JSON.stringify(result), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  });
+}
+
 describe("MochiOverlay", () => {
   it("turns the pet into an overlay and carries screenshot context through to fill", async () => {
     const user = userEvent.setup();
@@ -74,12 +93,7 @@ describe("MochiOverlay", () => {
       adapter: "dom",
       values: { name: "", summary: "Balanced draft." },
     });
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify(result), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
-    );
+    mockAuthorizedAnalysis();
 
     render(
       <MochiOverlay
@@ -134,12 +148,7 @@ describe("MochiOverlay", () => {
         adapter: "dom",
         values: { summary: "Balanced draft." },
       });
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify(result), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
-    );
+    mockAuthorizedAnalysis();
 
     render(
       <MochiOverlay

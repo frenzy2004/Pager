@@ -92,4 +92,14 @@ describe("exact DOM fallback", () => {
       )!.checked,
     ).toBe(true);
   });
+
+  it("undoes a changed control even when the host hides it afterward", () => {
+    const name = document.querySelector<HTMLInputElement>("[name=name]")!;
+    const result = applyExactValues(document, { name: "Jamie Chen" });
+    name.hidden = true;
+
+    undoExactValues(document, result.changed);
+
+    expect(name.value).toBe("Before");
+  });
 });

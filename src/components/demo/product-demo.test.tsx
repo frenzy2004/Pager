@@ -13,7 +13,16 @@ afterEach(() => {
 describe("ProductDemo", () => {
   it("fills and undoes the real embedded form through Mochi", async () => {
     const user = userEvent.setup();
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      if (String(input).includes("/api/connector/session")) {
+        return new Response(
+          JSON.stringify({
+            token: "test-web-session",
+            expiresAt: Date.now() + 15 * 60_000,
+          }),
+          { status: 200 },
+        );
+      }
       const packet = JSON.parse(String(init?.body)) as AnalysisInput;
       return new Response(JSON.stringify(createDemoAnalysis(packet)), {
         status: 200,

@@ -127,3 +127,35 @@ This file records verified checkpoints, failures, and corrective decisions.
   without browser errors. Axe reported zero confirmed violations (gradient
   contrast remained manual-review/incomplete), and Vercel returned no error or
   5xx logs for the verification window.
+
+## 2026-07-27 — Universal Chrome connector
+
+- **Cross-tab behavior:** the Manifest V3 connector now injects Mochi on every
+  normal HTTP/HTTPS tab and keeps one `chrome.storage.session` context tray in a
+  Chrome side panel, so switching tabs does not lose Mochi or prior captures.
+- **Capture workflow:** repeated viewport captures and frozen-frame region snips
+  are capped at eight, normalized before storage, and protected against
+  capture/Clear races. Page-controlled URL/title metadata is bounded before it
+  reaches storage or analysis.
+- **Execution adapter:** the shipped bundle pins Alibaba Page Agent `1.12.2`.
+  Its proxy accepts only the pinned `AgentOutput` macro-tool contract; clicking,
+  generated scripts, and implicit exact-fill fallback are disabled.
+- **Safety boundary:** Review renders the exact proposed key/value map without
+  mutation. Fill never submits. Autopilot requires one validated form boundary,
+  a fresh worker authorization, and a cancellable countdown. Execution, Cancel,
+  Clear, fallback, rollback, and Undo are bound to the original tab, document,
+  and safe-field manifest.
+- **Concurrency hardening:** delayed-storage regressions cover duplicate
+  execution, Clear during capture/execution preflight, Cancel during exact fill,
+  hidden-field rollback, and cancellation at the final success-commit window.
+  Success is revalidated inside the serialized storage-write boundary.
+- **Abuse controls:** connector sessions require proof of work plus a
+  short-lived IP-bound HMAC token. Analyze and Page Agent have per-session
+  quotas, bounded bodies, strict schemas, and the enabled Vercel WAF rule
+  `Mochi AI API - 30 req/min/IP`.
+- **Fresh release gate:** ESLint and TypeScript pass; 24 Vitest files / 118
+  tests pass; the Next.js production build and packaged extension pass;
+  Playwright reports 6 passing flows with 2 intentional skips for the
+  desktop-only unpacked-extension scenario; `npm audit` reports zero
+  vulnerabilities. An independent final code review returned GO with no
+  remaining correctness or security blocker.
